@@ -1,0 +1,18 @@
+language = "C"
+
+[parse]
+parse_deps = true
+include = ["libxml2-rs"]
+clean = false
+
+[export]
+include = [
+    "xmlDoc",
+    "xmlParserCtxt",
+    "xmlElementType",
+    "xmlAttributeType",
+    "xmlNode",
+    "xmlNs",
+    "xmlAttr",
+]
+prefix = "Ext"
