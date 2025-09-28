@@ -1,6 +1,9 @@
 use crate::doc::XmlDocument;
 use crate::tree::xmlDoc;
 use libc::{c_char, c_int};
+use std::ffi::CStr;
+use std::fs;
+use std::path::PathBuf;
 use std::ptr;
 
 // This is a placeholder for the parser context struct.
@@ -67,6 +70,94 @@ pub unsafe extern "C" fn xmlReadMemory(
     }
 
     doc_ptr
+}
+
+/// Parse a full XML document provided as a null-terminated UTF-8 buffer.
+///
+/// # Safety
+/// `cur` must point to a valid, null-terminated string containing the
+/// serialized document. The returned pointer must be freed with
+/// `xmlFreeDoc`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlReadDoc(
+    cur: *const u8,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    if cur.is_null() {
+        return ptr::null_mut();
+    }
+
+    let len = unsafe { libc::strlen(cur as *const c_char) };
+    if len > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    unsafe { xmlReadMemory(cur as *const c_char, len as c_int, url, encoding, options) }
+}
+
+/// Parse a document from a filesystem path, loading the file into memory
+/// before delegating to `xmlReadMemory`.
+///
+/// # Safety
+/// `filename` must be a valid null-terminated string representing a
+/// filesystem path that remains live for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlReadFile(
+    filename: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    let buffer = match unsafe { read_file_buffer(filename) } {
+        Some(buf) => buf,
+        None => return ptr::null_mut(),
+    };
+
+    if buffer.len() > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        xmlReadMemory(
+            buffer.as_ptr() as *const c_char,
+            buffer.len() as c_int,
+            filename,
+            encoding,
+            options,
+        )
+    }
+}
+
+/// Parse a document held entirely in memory, mirroring libxml2's legacy API.
+///
+/// # Safety
+/// Delegates to `xmlReadMemory`; see that function for requirements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlParseMemory(buffer: *const c_char, size: c_int) -> *mut xmlDoc {
+    unsafe { xmlReadMemory(buffer, size, ptr::null(), ptr::null(), 0) }
+}
+
+/// Parse a document from a null-terminated buffer, returning a constructed
+/// `xmlDoc` on success.
+///
+/// # Safety
+/// `cur` must reference a valid, null-terminated string. The caller owns the
+/// returned document and must release it with `xmlFreeDoc`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlParseDoc(cur: *const u8) -> *mut xmlDoc {
+    unsafe { xmlReadDoc(cur, ptr::null(), ptr::null(), 0) }
+}
+
+/// Parse a document directly from a file path using the default parsing
+/// options.
+///
+/// # Safety
+/// `filename` must be a valid null-terminated string representing a
+/// filesystem path that remains live for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlParseFile(filename: *const c_char) -> *mut xmlDoc {
+    unsafe { xmlReadFile(filename, ptr::null(), 0) }
 }
 
 /// Create a parser context for parsing from an in-memory buffer.
@@ -136,5 +227,31 @@ pub unsafe extern "C" fn xmlFreeParserCtxt(ctxt: *mut xmlParserCtxt) {
             drop(doc);
         }
         ctxt.doc = ptr::null_mut();
+    }
+}
+
+unsafe fn read_file_buffer(filename: *const c_char) -> Option<Vec<u8>> {
+    if filename.is_null() {
+        return None;
+    }
+
+    let cstr = unsafe { CStr::from_ptr(filename) };
+    let path = pathbuf_from_cstr(cstr)?;
+    fs::read(path).ok()
+}
+
+fn pathbuf_from_cstr(cstr: &CStr) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        Some(PathBuf::from(OsString::from_vec(cstr.to_bytes().to_vec())))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let string = cstr.to_str().ok()?;
+        Some(PathBuf::from(string))
     }
 }

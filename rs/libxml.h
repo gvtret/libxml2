@@ -157,6 +157,54 @@ struct xmlDoc *xmlReadMemory(const char *buffer,
                              int options);
 
 /**
+ * Parse a full XML document provided as a null-terminated UTF-8 buffer.
+ *
+ * # Safety
+ * `cur` must point to a valid, null-terminated string containing the
+ * serialized document. The returned pointer must be freed with
+ * `xmlFreeDoc`.
+ */
+struct xmlDoc *xmlReadDoc(const uint8_t *cur, const char *url, const char *encoding, int options);
+
+/**
+ * Parse a document from a filesystem path, loading the file into memory
+ * before delegating to `xmlReadMemory`.
+ *
+ * # Safety
+ * `filename` must be a valid null-terminated string representing a
+ * filesystem path that remains live for the duration of this call.
+ */
+struct xmlDoc *xmlReadFile(const char *filename, const char *encoding, int options);
+
+/**
+ * Parse a document held entirely in memory, mirroring libxml2's legacy API.
+ *
+ * # Safety
+ * Delegates to `xmlReadMemory`; see that function for requirements.
+ */
+struct xmlDoc *xmlParseMemory(const char *buffer, int size);
+
+/**
+ * Parse a document from a null-terminated buffer, returning a constructed
+ * `xmlDoc` on success.
+ *
+ * # Safety
+ * `cur` must reference a valid, null-terminated string. The caller owns the
+ * returned document and must release it with `xmlFreeDoc`.
+ */
+struct xmlDoc *xmlParseDoc(const uint8_t *cur);
+
+/**
+ * Parse a document directly from a file path using the default parsing
+ * options.
+ *
+ * # Safety
+ * `filename` must be a valid null-terminated string representing a
+ * filesystem path that remains live for the duration of this call.
+ */
+struct xmlDoc *xmlParseFile(const char *filename);
+
+/**
  * Create a parser context for parsing from an in-memory buffer.
  *
  * # Safety

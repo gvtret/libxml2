@@ -79,7 +79,9 @@
 - Added initial parser API audit enumerating the functions still pending Rust implementations.
 - Created a reusable script for running `cargo fmt`, `cargo clippy`, and verifying generated headers, laying groundwork for CI integration.
 - Stubbed the parser context lifecycle (`xmlCreateMemoryParserCtxt`, `xmlParseDocument`, `xmlFreeParserCtxt`) so Rust can own
-  shell documents while preserving the existing FFI contracts.
+ shell documents while preserving the existing FFI contracts.
+- Extended the in-memory parsing surface by stubbing `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` on top of the Rust `xmlReadMemory` implementation.
+- Routed `xmlReadFile` and `xmlParseFile` through the Rust stubs so filesystem-based entry points behave consistently with the in-memory helpers.
 
 ## Tooling Notes
 - The helper script `rs/devtools.sh` runs formatting, lint, and header-generation checks; wire this into Meson/CMake and future
