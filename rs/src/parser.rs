@@ -1,4 +1,4 @@
-use crate::doc::XmlDocument;
+use crate::doc::{XmlDocument, xmlFreeDoc};
 use crate::tree::xmlDoc;
 use libc::{c_char, c_int, c_void};
 use std::ffi::CStr;
@@ -172,6 +172,33 @@ pub unsafe extern "C" fn xmlReadFile(
     }
 }
 
+/// Parse a document from disk using a SAX handler.
+///
+/// # Safety
+/// `sax` and `user_data` may be null and are currently unused by the Rust
+/// placeholder implementation. `filename` must be a valid null-terminated
+/// string. Returns `0` on success and `-1` on failure, mirroring libxml2's C
+/// API contract.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlSAXUserParseFile(
+    sax: *mut c_void,
+    user_data: *mut c_void,
+    filename: *const c_char,
+) -> c_int {
+    let _ = (sax, user_data);
+
+    let doc = unsafe { xmlReadFile(filename, ptr::null(), 0) };
+    if doc.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        xmlFreeDoc(doc);
+    }
+
+    0
+}
+
 /// Parse a document from a filesystem path in recovery mode.
 ///
 /// # Safety
@@ -209,6 +236,38 @@ pub unsafe extern "C" fn xmlReadFd(
     let doc = unsafe { xmlCtxtReadFd(ctxt, fd, url, encoding, options) };
     unsafe { xmlFreeParserCtxt(ctxt) };
     doc
+}
+
+/// Parse an in-memory document using a SAX handler.
+///
+/// # Safety
+/// The placeholder parser validates the buffer using `xmlReadMemory` and does
+/// not trigger callbacks on the provided SAX handler. `buffer` must either be
+/// null (when `size` is zero) or reference a readable memory region of `size`
+/// bytes. Returns `0` on success and `-1` otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlSAXUserParseMemory(
+    sax: *mut c_void,
+    user_data: *mut c_void,
+    buffer: *const c_char,
+    size: c_int,
+) -> c_int {
+    let _ = (sax, user_data);
+
+    if size < 0 || (size > 0 && buffer.is_null()) {
+        return -1;
+    }
+
+    let doc = unsafe { xmlReadMemory(buffer, size, ptr::null(), ptr::null(), 0) };
+    if doc.is_null() {
+        return -1;
+    }
+
+    unsafe {
+        xmlFreeDoc(doc);
+    }
+
+    0
 }
 
 /// Parse a document from custom I/O callbacks, mirroring `xmlReadIO`.

@@ -87,6 +87,7 @@
 - Filled out the parser context lifecycle by stubbing `xmlNewParserCtxt`, `xmlInitParserCtxt`, `xmlClearParserCtxt`, `xmlCreateDocParserCtxt`, `xmlInitParser`, and `xmlCleanupParser` so callers can exercise the Rust scaffolding via the familiar C entry points.
 - Added `xmlReadIO`/`xmlCtxtReadIO` shims that buffer callback-driven input before delegating to the placeholder parser, covering the remaining non-streaming read entry points.
 - Stubbed `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` to honour recovery-mode parsing via the Rust read helpers.
+- Stubbed `xmlSAXUserParseFile` and `xmlSAXUserParseMemory` to validate inputs while deferring SAX callback wiring.
 
 ## Tooling Notes
 - The helper script `rs/devtools.sh` runs formatting, lint, and header-generation checks; wire this into Meson/CMake and future

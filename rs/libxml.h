@@ -222,6 +222,17 @@ struct xmlDoc *xmlRecoverDoc(const uint8_t *cur,
 struct xmlDoc *xmlReadFile(const char *filename, const char *encoding, int options);
 
 /**
+ * Parse a document from disk using a SAX handler.
+ *
+ * # Safety
+ * `sax` and `user_data` may be null and are currently unused by the Rust
+ * placeholder implementation. `filename` must be a valid null-terminated
+ * string. Returns `0` on success and `-1` on failure, mirroring libxml2's C
+ * API contract.
+ */
+int xmlSAXUserParseFile(void *sax, void *user_data, const char *filename);
+
+/**
  * Parse a document from a filesystem path in recovery mode.
  *
  * # Safety
@@ -237,6 +248,17 @@ struct xmlDoc *xmlRecoverFile(const char *filename, const char *encoding, int op
  * **not** be closed by this function.
  */
 struct xmlDoc *xmlReadFd(int fd, const char *url, const char *encoding, int options);
+
+/**
+ * Parse an in-memory document using a SAX handler.
+ *
+ * # Safety
+ * The placeholder parser validates the buffer using `xmlReadMemory` and does
+ * not trigger callbacks on the provided SAX handler. `buffer` must either be
+ * null (when `size` is zero) or reference a readable memory region of `size`
+ * bytes. Returns `0` on success and `-1` otherwise.
+ */
+int xmlSAXUserParseMemory(void *sax, void *user_data, const char *buffer, int size);
 
 /**
  * Parse a document from custom I/O callbacks, mirroring `xmlReadIO`.

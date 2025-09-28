@@ -12,6 +12,7 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: `xmlReadFile`/`xmlParseFile` now load the target file and reuse the in-memory stub to provide consistent behaviour.
 - :white_check_mark: `xmlReadFd` and `xmlCtxtReadFd` read from existing descriptors without taking ownership and delegate to the in-memory flow.
 - :white_check_mark: `xmlReadIO` and `xmlCtxtReadIO` bridge custom I/O callbacks through the in-memory placeholder parser while ensuring callbacks are closed.
+- :white_check_mark: `xmlSAXUserParseFile` and `xmlSAXUserParseMemory` validate inputs via the placeholder DOM builder while leaving SAX callbacks unimplemented.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
 - :white_check_mark: `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` reuse the read helpers with recovery parsing enabled.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
@@ -32,8 +33,8 @@ progress through Phase 1 of the porting plan.
 | `xmlParseDoc` | ✅ Stubbed | Reuses `xmlReadDoc` stub. |
 | `xmlParseMemory` | ✅ Stubbed | Routes to `xmlReadMemory`. |
 | `xmlParseFile` | ✅ Stubbed | Delegates to `xmlReadFile` with default options. |
-| `xmlSAXUserParseFile` | ❌ Missing | Requires SAX handler bridging. |
-| `xmlSAXUserParseMemory` | ❌ Missing | " |
+| `xmlSAXUserParseFile` | ✅ Stubbed | Validates input using DOM placeholder; callbacks pending. |
+| `xmlSAXUserParseMemory` | ✅ Stubbed | " |
 | `xmlCreatePushParserCtxt` | ❌ Missing | Needs streaming parser implementation. |
 | `xmlParseChunk` | ❌ Missing | Streaming support pending. |
 | `xmlStopParser` | ❌ Missing | Depends on parser state machine. |
