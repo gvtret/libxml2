@@ -157,6 +157,24 @@ struct xmlDoc *xmlReadMemory(const char *buffer,
                              int options);
 
 /**
+ * Initialise the global parser state bookkeeping.
+ *
+ * # Safety
+ * Matches the C ABI contract: may be called from any thread without prior
+ * initialisation. The function performs no memory unsafe operations.
+ */
+void xmlInitParser(void);
+
+/**
+ * Tear down the global parser bookkeeping established by `xmlInitParser`.
+ *
+ * # Safety
+ * Safe to call multiple times and from any thread, mirroring the semantics of
+ * the legacy C implementation.
+ */
+void xmlCleanupParser(void);
+
+/**
  * Parse a full XML document provided as a null-terminated UTF-8 buffer.
  *
  * # Safety
@@ -242,6 +260,33 @@ struct xmlDoc *xmlCtxtReadFile(struct xmlParserCtxt *ctxt,
                                int options);
 
 /**
+ * Allocate a fresh parser context initialised with default state.
+ *
+ * # Safety
+ * Returns a raw pointer that must be released with `xmlFreeParserCtxt`. The
+ * caller is responsible for ensuring the context is not leaked or freed twice.
+ */
+struct xmlParserCtxt *xmlNewParserCtxt(void);
+
+/**
+ * Reset an existing parser context to its initial state.
+ *
+ * # Safety
+ * `ctxt` must be either null or a pointer obtained from one of the parser
+ * context constructors. Passing any other pointer is undefined behaviour.
+ */
+int xmlInitParserCtxt(struct xmlParserCtxt *ctxt);
+
+/**
+ * Clear the transient parse state stored in a parser context.
+ *
+ * # Safety
+ * `ctxt` must be either null or a valid parser context pointer previously
+ * returned by the Rust constructors.
+ */
+void xmlClearParserCtxt(struct xmlParserCtxt *ctxt);
+
+/**
  * Create a parser context for parsing from an in-memory buffer.
  *
  * # Safety
@@ -267,3 +312,14 @@ int xmlParseDocument(struct xmlParserCtxt *ctxt);
  * `ctxt` must be null or a pointer obtained from `xmlCreateMemoryParserCtxt`.
  */
 void xmlFreeParserCtxt(struct xmlParserCtxt *ctxt);
+
+/**
+ * Create a parser context primed with a null-terminated in-memory document.
+ *
+ * # Safety
+ * `cur` must be a valid pointer to a null-terminated buffer that remains
+ * accessible for the lifetime of the parser context unless replaced by other
+ * parsing routines. The returned context must be freed with
+ * `xmlFreeParserCtxt`.
+ */
+struct xmlParserCtxt *xmlCreateDocParserCtxt(const uint8_t *cur);

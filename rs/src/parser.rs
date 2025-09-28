@@ -5,6 +5,7 @@ use std::ffi::CStr;
 use std::fs;
 use std::path::PathBuf;
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // This is a placeholder for the parser context struct.
 // It will be filled out as the implementation progresses.
@@ -19,6 +20,8 @@ pub struct xmlParserCtxt {
     pub base_url: *const c_char,
     pub encoding: *const c_char,
 }
+
+static PARSER_INIT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// A placeholder implementation of xmlReadMemory.
 ///
@@ -51,6 +54,26 @@ pub unsafe extern "C" fn xmlReadMemory(
     let doc = unsafe { xmlCtxtReadMemory(ctxt, buffer, size, url, encoding, options) };
     unsafe { xmlFreeParserCtxt(ctxt) };
     doc
+}
+
+/// Initialise the global parser state bookkeeping.
+///
+/// # Safety
+/// Matches the C ABI contract: may be called from any thread without prior
+/// initialisation. The function performs no memory unsafe operations.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlInitParser() {
+    PARSER_INIT_COUNT.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Tear down the global parser bookkeeping established by `xmlInitParser`.
+///
+/// # Safety
+/// Safe to call multiple times and from any thread, mirroring the semantics of
+/// the legacy C implementation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCleanupParser() {
+    PARSER_INIT_COUNT.store(0, Ordering::SeqCst);
 }
 
 /// Parse a full XML document provided as a null-terminated UTF-8 buffer.
@@ -243,6 +266,55 @@ pub unsafe extern "C" fn xmlCtxtReadFile(
     }
 }
 
+/// Allocate a fresh parser context initialised with default state.
+///
+/// # Safety
+/// Returns a raw pointer that must be released with `xmlFreeParserCtxt`. The
+/// caller is responsible for ensuring the context is not leaked or freed twice.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlNewParserCtxt() -> *mut xmlParserCtxt {
+    let mut ctxt = Box::new(new_parser_context(ptr::null(), 0));
+    if unsafe { xmlInitParserCtxt(&mut *ctxt) } != 0 {
+        return ptr::null_mut();
+    }
+
+    Box::into_raw(ctxt)
+}
+
+/// Reset an existing parser context to its initial state.
+///
+/// # Safety
+/// `ctxt` must be either null or a pointer obtained from one of the parser
+/// context constructors. Passing any other pointer is undefined behaviour.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlInitParserCtxt(ctxt: *mut xmlParserCtxt) -> c_int {
+    if ctxt.is_null() {
+        return -1;
+    }
+
+    let ctxt_ref = unsafe { &mut *ctxt };
+    unsafe { reset_context_doc(ctxt_ref) };
+    reset_context_state(ctxt_ref);
+
+    0
+}
+
+/// Clear the transient parse state stored in a parser context.
+///
+/// # Safety
+/// `ctxt` must be either null or a valid parser context pointer previously
+/// returned by the Rust constructors.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlClearParserCtxt(ctxt: *mut xmlParserCtxt) {
+    if ctxt.is_null() {
+        return;
+    }
+
+    let ctxt_ref = unsafe { &mut *ctxt };
+    unsafe { reset_context_doc(ctxt_ref) };
+    reset_context_state(ctxt_ref);
+}
+
 /// Create a parser context for parsing from an in-memory buffer.
 ///
 /// # Safety
@@ -258,17 +330,7 @@ pub unsafe extern "C" fn xmlCreateMemoryParserCtxt(
         return ptr::null_mut();
     }
 
-    let ctxt = Box::new(xmlParserCtxt {
-        doc: ptr::null_mut(),
-        wellFormed: 0,
-        options: 0,
-        input: buffer,
-        input_size: size,
-        base_url: ptr::null(),
-        encoding: ptr::null(),
-    });
-
-    Box::into_raw(ctxt)
+    Box::into_raw(Box::new(new_parser_context(buffer, size)))
 }
 
 /// Parse a document using the supplied parser context, synthesising a shell
@@ -308,6 +370,36 @@ pub unsafe extern "C" fn xmlFreeParserCtxt(ctxt: *mut xmlParserCtxt) {
     unsafe { reset_context_doc(&mut ctxt) };
 }
 
+/// Create a parser context primed with a null-terminated in-memory document.
+///
+/// # Safety
+/// `cur` must be a valid pointer to a null-terminated buffer that remains
+/// accessible for the lifetime of the parser context unless replaced by other
+/// parsing routines. The returned context must be freed with
+/// `xmlFreeParserCtxt`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCreateDocParserCtxt(cur: *const u8) -> *mut xmlParserCtxt {
+    if cur.is_null() {
+        return ptr::null_mut();
+    }
+
+    let len = unsafe { libc::strlen(cur as *const c_char) };
+    if len > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    let ctxt = unsafe { xmlNewParserCtxt() };
+    if ctxt.is_null() {
+        return ptr::null_mut();
+    }
+
+    let ctxt_ref = unsafe { &mut *ctxt };
+    ctxt_ref.input = cur as *const c_char;
+    ctxt_ref.input_size = len as c_int;
+
+    ctxt
+}
+
 unsafe fn read_file_buffer(filename: *const c_char) -> Option<Vec<u8>> {
     if filename.is_null() {
         return None;
@@ -316,6 +408,18 @@ unsafe fn read_file_buffer(filename: *const c_char) -> Option<Vec<u8>> {
     let cstr = unsafe { CStr::from_ptr(filename) };
     let path = pathbuf_from_cstr(cstr)?;
     fs::read(path).ok()
+}
+
+fn new_parser_context(buffer: *const c_char, size: c_int) -> xmlParserCtxt {
+    xmlParserCtxt {
+        doc: ptr::null_mut(),
+        wellFormed: 1,
+        options: 0,
+        input: buffer,
+        input_size: size,
+        base_url: ptr::null(),
+        encoding: ptr::null(),
+    }
 }
 
 fn pathbuf_from_cstr(cstr: &CStr) -> Option<PathBuf> {
@@ -358,4 +462,13 @@ unsafe fn finalize_context_parse(ctxt: &mut xmlParserCtxt, parse_rc: c_int) -> *
     }
 
     doc_ptr
+}
+
+fn reset_context_state(ctxt: &mut xmlParserCtxt) {
+    ctxt.wellFormed = 1;
+    ctxt.options = 0;
+    ctxt.input = ptr::null();
+    ctxt.input_size = 0;
+    ctxt.base_url = ptr::null();
+    ctxt.encoding = ptr::null();
 }

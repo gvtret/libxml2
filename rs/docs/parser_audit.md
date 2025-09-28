@@ -6,7 +6,8 @@ progress through Phase 1 of the porting plan.
 ## Summary
 - :white_check_mark: `xmlReadMemory` is stubbed out in Rust to exercise the FFI surface.
 - :white_check_mark: `xmlFreeDoc` frees the dummy document allocation through the new RAII wrapper.
-- :white_check_mark: Parser context lifecycle helpers (`xmlCreateMemoryParserCtxt`, `xmlParseDocument`, `xmlFreeParserCtxt`) are now stubbed to retain metadata and manage document ownership in Rust.
+- :white_check_mark: Parser context lifecycle helpers (`xmlCreateMemoryParserCtxt`, `xmlParseDocument`, `xmlFreeParserCtxt`, `xmlNewParserCtxt`, `xmlInitParserCtxt`, `xmlClearParserCtxt`, `xmlCreateDocParserCtxt`) are now stubbed to retain metadata and manage document ownership in Rust.
+- :white_check_mark: Global parser initialisation and teardown (`xmlInitParser`, `xmlCleanupParser`) are stubbed to maintain compatibility with the C entry points.
 - :white_check_mark: `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` reuse the Rust `xmlReadMemory` stub for in-memory parsing.
 - :white_check_mark: `xmlReadFile`/`xmlParseFile` now load the target file and reuse the in-memory stub to provide consistent behaviour.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
@@ -34,14 +35,15 @@ progress through Phase 1 of the porting plan.
 | `xmlParseChunk` | ❌ Missing | Streaming support pending. |
 | `xmlStopParser` | ❌ Missing | Depends on parser state machine. |
 | `xmlResumeParser` | ❌ Missing | " |
-| `xmlClearParserCtxt` | ❌ Missing | Context lifecycle currently unimplemented. |
+| `xmlClearParserCtxt` | ✅ Stubbed | Drops any owned document and resets parser metadata. |
+| `xmlInitParserCtxt` | ✅ Stubbed | Resets the lightweight Rust context state. |
+| `xmlCreateDocParserCtxt` | ✅ Stubbed | Wraps `xmlNewParserCtxt` and records the caller's buffer metadata. |
 | `xmlCreateMemoryParserCtxt` | ✅ Stubbed | Records caller metadata without performing real parsing. |
 | `xmlParseDocument` | ✅ Stubbed | Synthesises a shell document and marks the context as well-formed. |
 | `xmlFreeParserCtxt` | ✅ Stubbed | Drops the Rust-owned document if present. |
-| `xmlInitParser` | ❌ Missing | Needs global init shared with dictionaries. |
-| `xmlCleanupParser` | ❌ Missing | Mirror init/cleanup in Rust. |
-| `xmlCreateDocParserCtxt` | ❌ Missing | Depends on context modelling. |
-| `xmlNewParserCtxt` | ❌ Missing | " |
+| `xmlInitParser` | ✅ Stubbed | Tracks init calls to maintain observable side effects. |
+| `xmlCleanupParser` | ✅ Stubbed | Clears the init bookkeeping state. |
+| `xmlNewParserCtxt` | ✅ Stubbed | Allocates a lightweight context shell. |
 | `xmlRecoverMemory` | ❌ Missing | Hooks into recovery mode. |
 | `xmlRecoverDoc` | ❌ Missing | " |
 | `xmlRecoverFile` | ❌ Missing | " |
