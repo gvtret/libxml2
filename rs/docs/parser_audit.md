@@ -53,6 +53,13 @@ progress through Phase 1 of the porting plan.
 | `xmlRecoverDoc` | ✅ Stubbed | Reuses `xmlReadDoc` and recovery options. |
 | `xmlRecoverFile` | ✅ Stubbed | Calls `xmlReadFile` with recovery enabled. |
 
+## Legacy regression suite status
+
+- :x: Running the upstream C regression suite with the Rust library preloaded via `rs/run_legacy_tests.sh` currently fails.
+  - `runtest` produces thousands of mismatched output files because the placeholder parser returns empty documents, culminating in a segmentation fault once the harness inspects the bogus results.
+  - `runsuite`, `testchar`, `testparser`, and `testrecurse` all crash immediately because they expect fully-populated DOM trees, SAX callbacks, and recursion detection that the stubs do not yet provide.
+  - Only `testapi` and `testdict` complete without crashing; the remaining binaries abort as soon as they hit unimplemented functionality.
+
 ## Next steps
 - Introduce a thin abstraction layer that allows C entry points to toggle between Rust and legacy implementations.
 - Replace the placeholder buffering in the push parser with a real streaming state machine and wire SAX callbacks through the Rust scaffolding.
