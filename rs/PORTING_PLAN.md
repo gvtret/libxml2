@@ -82,6 +82,7 @@
  shell documents while preserving the existing FFI contracts.
 - Extended the in-memory parsing surface by stubbing `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` on top of the Rust `xmlReadMemory` implementation.
 - Routed `xmlReadFile` and `xmlParseFile` through the Rust stubs so filesystem-based entry points behave consistently with the in-memory helpers.
+- Added `xmlReadFd`/`xmlCtxtReadFd` stubs that stream descriptor contents through the existing memory-backed placeholder parser while keeping descriptors open for the caller.
 - Stubbed the context-based helpers (`xmlCtxtReadMemory`, `xmlCtxtReadDoc`, `xmlCtxtReadFile`) to drive the placeholder parser via existing contexts.
 - Filled out the parser context lifecycle by stubbing `xmlNewParserCtxt`, `xmlInitParserCtxt`, `xmlClearParserCtxt`, `xmlCreateDocParserCtxt`, `xmlInitParser`, and `xmlCleanupParser` so callers can exercise the Rust scaffolding via the familiar C entry points.
 

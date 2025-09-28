@@ -10,6 +10,7 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: Global parser initialisation and teardown (`xmlInitParser`, `xmlCleanupParser`) are stubbed to maintain compatibility with the C entry points.
 - :white_check_mark: `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` reuse the Rust `xmlReadMemory` stub for in-memory parsing.
 - :white_check_mark: `xmlReadFile`/`xmlParseFile` now load the target file and reuse the in-memory stub to provide consistent behaviour.
+- :white_check_mark: `xmlReadFd` and `xmlCtxtReadFd` read from existing descriptors without taking ownership and delegate to the in-memory flow.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
@@ -19,12 +20,12 @@ progress through Phase 1 of the porting plan.
 | --- | --- | --- |
 | `xmlReadMemory` | ✅ Stubbed | Returns placeholder document via `XmlDocument`. |
 | `xmlReadFile` | ✅ Stubbed | Reads the file then calls `xmlReadMemory`. |
-| `xmlReadFd` | ❌ Missing | Requires Rust I/O abstraction (Phase 4 dependency). |
+| `xmlReadFd` | ✅ Stubbed | Reads from descriptor without closing and reuses `xmlReadMemory`. |
 | `xmlReadDoc` | ✅ Stubbed | Delegates to `xmlReadMemory`. |
 | `xmlReadIO` | ❌ Missing | Blocked on Rust `xmlIO` port. |
 | `xmlCtxtReadMemory` | ✅ Stubbed | Delegates to the Rust placeholder parser. |
 | `xmlCtxtReadIO` | ❌ Missing | Requires context + I/O integration. |
-| `xmlCtxtReadFd` | ❌ Missing | " |
+| `xmlCtxtReadFd` | ✅ Stubbed | Loads descriptor contents then routes through `xmlCtxtReadMemory`. |
 | `xmlCtxtReadFile` | ✅ Stubbed | Loads from disk then routes through `xmlCtxtReadMemory`. |
 | `xmlParseDoc` | ✅ Stubbed | Reuses `xmlReadDoc` stub. |
 | `xmlParseMemory` | ✅ Stubbed | Routes to `xmlReadMemory`. |

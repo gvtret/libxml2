@@ -3,6 +3,7 @@ use crate::tree::xmlDoc;
 use libc::{c_char, c_int};
 use std::ffi::CStr;
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -133,6 +134,32 @@ pub unsafe extern "C" fn xmlReadFile(
     }
 }
 
+/// Parse an XML document from an existing file descriptor.
+///
+/// # Safety
+/// The file descriptor must remain open for the duration of this call. It will
+/// **not** be closed by this function.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlReadFd(
+    fd: c_int,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    if fd < 0 {
+        return ptr::null_mut();
+    }
+
+    let ctxt = unsafe { xmlNewParserCtxt() };
+    if ctxt.is_null() {
+        return ptr::null_mut();
+    }
+
+    let doc = unsafe { xmlCtxtReadFd(ctxt, fd, url, encoding, options) };
+    unsafe { xmlFreeParserCtxt(ctxt) };
+    doc
+}
+
 /// Parse a document held entirely in memory, mirroring libxml2's legacy API.
 ///
 /// # Safety
@@ -260,6 +287,44 @@ pub unsafe extern "C" fn xmlCtxtReadFile(
             buffer.as_ptr() as *const c_char,
             buffer.len() as c_int,
             filename,
+            encoding,
+            options,
+        )
+    }
+}
+
+/// Parse an XML document using the supplied context and file descriptor.
+///
+/// # Safety
+/// The file descriptor must stay valid for the duration of the call and is not
+/// closed when parsing completes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCtxtReadFd(
+    ctxt: *mut xmlParserCtxt,
+    fd: c_int,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    if ctxt.is_null() || fd < 0 {
+        return ptr::null_mut();
+    }
+
+    let buffer = match unsafe { read_fd_buffer(fd) } {
+        Some(buf) => buf,
+        None => return ptr::null_mut(),
+    };
+
+    if buffer.len() > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        xmlCtxtReadMemory(
+            ctxt,
+            buffer.as_ptr() as *const c_char,
+            buffer.len() as c_int,
+            url,
             encoding,
             options,
         )
@@ -408,6 +473,50 @@ unsafe fn read_file_buffer(filename: *const c_char) -> Option<Vec<u8>> {
     let cstr = unsafe { CStr::from_ptr(filename) };
     let path = pathbuf_from_cstr(cstr)?;
     fs::read(path).ok()
+}
+
+unsafe fn read_fd_buffer(fd: c_int) -> Option<Vec<u8>> {
+    if fd < 0 {
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::mem::ManuallyDrop;
+        use std::os::unix::io::FromRawFd;
+
+        let mut file = ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+        let mut data = Vec::new();
+        if (*file).read_to_end(&mut data).is_err() {
+            return None;
+        }
+        Some(data)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::mem::ManuallyDrop;
+        use std::os::windows::io::{FromRawHandle, RawHandle};
+
+        let handle = unsafe { libc::_get_osfhandle(fd) };
+        if handle == -1 {
+            return None;
+        }
+
+        let mut file =
+            ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(handle as RawHandle) });
+        let mut data = Vec::new();
+        if (*file).read_to_end(&mut data).is_err() {
+            return None;
+        }
+        Some(data)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = fd;
+        None
+    }
 }
 
 fn new_parser_context(buffer: *const c_char, size: c_int) -> xmlParserCtxt {

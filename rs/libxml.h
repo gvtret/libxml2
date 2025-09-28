@@ -195,6 +195,15 @@ struct xmlDoc *xmlReadDoc(const uint8_t *cur, const char *url, const char *encod
 struct xmlDoc *xmlReadFile(const char *filename, const char *encoding, int options);
 
 /**
+ * Parse an XML document from an existing file descriptor.
+ *
+ * # Safety
+ * The file descriptor must remain open for the duration of this call. It will
+ * **not** be closed by this function.
+ */
+struct xmlDoc *xmlReadFd(int fd, const char *url, const char *encoding, int options);
+
+/**
  * Parse a document held entirely in memory, mirroring libxml2's legacy API.
  *
  * # Safety
@@ -258,6 +267,19 @@ struct xmlDoc *xmlCtxtReadFile(struct xmlParserCtxt *ctxt,
                                const char *filename,
                                const char *encoding,
                                int options);
+
+/**
+ * Parse an XML document using the supplied context and file descriptor.
+ *
+ * # Safety
+ * The file descriptor must stay valid for the duration of the call and is not
+ * closed when parsing completes.
+ */
+struct xmlDoc *xmlCtxtReadFd(struct xmlParserCtxt *ctxt,
+                             int fd,
+                             const char *url,
+                             const char *encoding,
+                             int options);
 
 /**
  * Allocate a fresh parser context initialised with default state.
