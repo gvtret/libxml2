@@ -70,6 +70,16 @@
 5. **C deprecation** – Retire redundant C modules once Rust reaches full compatibility, retaining legacy code behind build flags for transitional releases.
 
 ## Immediate Next Steps
-- Audit `rs/src/parser.rs` for completeness against `parser.c` entry points and log missing functions.
-- Prototype a Rust-owned document allocator with drop semantics mirroring `xmlFreeDoc`.
-- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards.
+- Audit `rs/src/parser.rs` for completeness against `parser.c` entry points and log missing functions. ✅ See `rs/docs/parser_audit.md`.
+- Prototype a Rust-owned document allocator with drop semantics mirroring `xmlFreeDoc`. ✅ Implemented via `XmlDocument` in `rs/src/doc.rs`.
+- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards. 🚧 Added developer tooling script `rs/devtools.sh` (runs fmt & clippy) and documented expectations for CI wiring.
+
+## Progress Log
+- Introduced `XmlDocument` RAII wrapper to manage `xmlDoc` allocations safely across the FFI boundary.
+- Added initial parser API audit enumerating the functions still pending Rust implementations.
+- Created a reusable script for running `cargo fmt` and `cargo clippy`, laying groundwork for CI integration.
+
+## Tooling Notes
+- The helper script `rs/devtools.sh` runs formatting and lint checks; wire this into Meson/CMake and future CI jobs to gate Rust
+  changes.
+- Capture the script's output artifacts in CI logs so regressions are visible to C contributors unfamiliar with Rust tooling.
