@@ -55,7 +55,8 @@ progress through Phase 1 of the porting plan.
 
 ## Legacy regression suite status
 
-- :x: Running the upstream C regression suite with the Rust library preloaded via `rs/run_legacy_tests.sh` currently fails.
+- :white_check_mark: Running `rs/run_legacy_tests.sh` against the in-tree C library (the default) now passes, allowing us to validate the baseline without the Rust preload in the loop.
+- :x: Opting into the Rust preload via `LIBXML2_RS_PRELOAD=1 ./rs/run_legacy_tests.sh` (or `--preload`) still fails for the reasons captured below.
   - `runtest` produces thousands of mismatched output files because the placeholder parser returns empty documents, culminating in a segmentation fault once the harness inspects the bogus results.
   - `runsuite`, `testchar`, `testparser`, and `testrecurse` all crash immediately because they expect fully-populated DOM trees, SAX callbacks, and recursion detection that the stubs do not yet provide.
   - Only `testapi` and `testdict` complete without crashing; the remaining binaries abort as soon as they hit unimplemented functionality.
