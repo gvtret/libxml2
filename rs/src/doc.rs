@@ -218,3 +218,71 @@ pub unsafe extern "C" fn xmlFreeDoc(doc: *mut xmlDoc) {
         drop(doc);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::{CStr, CString};
+    use std::ptr;
+
+    fn reset_doc_extras() {
+        DOC_EXTRAS.lock().expect("DOC_EXTRAS poisoned").clear();
+    }
+
+    #[test]
+    fn xml_document_defaults_match_legacy_values() {
+        reset_doc_extras();
+
+        let doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        let raw = doc.as_ptr();
+
+        unsafe {
+            let version = CStr::from_ptr((*raw).version as *const c_char);
+            assert_eq!(version.to_str().unwrap(), "1.0");
+
+            let encoding = CStr::from_ptr((*raw).encoding as *const c_char);
+            assert_eq!(encoding.to_str().unwrap(), "UTF-8");
+
+            assert!((*raw).URL.is_null());
+        }
+    }
+
+    #[test]
+    fn xml_document_round_trip_preserves_metadata() {
+        reset_doc_extras();
+
+        let url = CString::new("file:///tmp/example.xml").unwrap();
+        let encoding = CString::new("ISO-8859-1").unwrap();
+
+        let doc = unsafe { XmlDocument::new(42, url.as_ptr(), encoding.as_ptr()) };
+        let raw = doc.into_raw();
+
+        let doc = unsafe { XmlDocument::from_raw(raw) }.expect("document metadata");
+        let c_doc = unsafe { &*doc.as_ptr() };
+
+        assert_eq!(c_doc.parseFlags, 42);
+
+        unsafe {
+            let encoding = CStr::from_ptr(c_doc.encoding as *const c_char);
+            assert_eq!(encoding.to_str().unwrap(), "ISO-8859-1");
+
+            let url = CStr::from_ptr(c_doc.URL as *const c_char);
+            assert_eq!(url.to_str().unwrap(), "file:///tmp/example.xml");
+        }
+    }
+
+    #[test]
+    fn xml_free_doc_clears_registered_metadata() {
+        reset_doc_extras();
+
+        let encoding = CString::new("UTF-16").unwrap();
+        let doc = unsafe { XmlDocument::new(0, ptr::null(), encoding.as_ptr()) };
+        let raw = doc.into_raw();
+
+        unsafe {
+            xmlFreeDoc(raw);
+        }
+
+        assert!(DOC_EXTRAS.lock().expect("DOC_EXTRAS poisoned").is_empty());
+    }
+}
