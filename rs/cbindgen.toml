@@ -15,4 +15,3 @@ include = [
     "xmlNs",
     "xmlAttr",
 ]
-prefix = "Ext"
