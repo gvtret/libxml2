@@ -13,6 +13,7 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: `xmlReadFd` and `xmlCtxtReadFd` read from existing descriptors without taking ownership and delegate to the in-memory flow.
 - :white_check_mark: `xmlReadIO` and `xmlCtxtReadIO` bridge custom I/O callbacks through the in-memory placeholder parser while ensuring callbacks are closed.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
+- :white_check_mark: `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` reuse the read helpers with recovery parsing enabled.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
 ## Entry points
@@ -46,9 +47,9 @@ progress through Phase 1 of the porting plan.
 | `xmlInitParser` | ✅ Stubbed | Tracks init calls to maintain observable side effects. |
 | `xmlCleanupParser` | ✅ Stubbed | Clears the init bookkeeping state. |
 | `xmlNewParserCtxt` | ✅ Stubbed | Allocates a lightweight context shell. |
-| `xmlRecoverMemory` | ❌ Missing | Hooks into recovery mode. |
-| `xmlRecoverDoc` | ❌ Missing | " |
-| `xmlRecoverFile` | ❌ Missing | " |
+| `xmlRecoverMemory` | ✅ Stubbed | Delegates to `xmlReadMemory` with recovery flag. |
+| `xmlRecoverDoc` | ✅ Stubbed | Reuses `xmlReadDoc` and recovery options. |
+| `xmlRecoverFile` | ✅ Stubbed | Calls `xmlReadFile` with recovery enabled. |
 
 ## Next steps
 - Introduce a thin abstraction layer that allows C entry points to toggle between Rust and legacy implementations.

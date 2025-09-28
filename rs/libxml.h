@@ -161,6 +161,18 @@ struct xmlDoc *xmlReadMemory(const char *buffer,
                              int options);
 
 /**
+ * Parse a buffer in recovery mode, mirroring `xmlRecoverMemory`.
+ *
+ * # Safety
+ * Delegates to `xmlReadMemory`; see that function for requirements.
+ */
+struct xmlDoc *xmlRecoverMemory(const char *buffer,
+                                int size,
+                                const char *url,
+                                const char *encoding,
+                                int options);
+
+/**
  * Initialise the global parser state bookkeeping.
  *
  * # Safety
@@ -189,6 +201,17 @@ void xmlCleanupParser(void);
 struct xmlDoc *xmlReadDoc(const uint8_t *cur, const char *url, const char *encoding, int options);
 
 /**
+ * Parse a null-terminated buffer in recovery mode.
+ *
+ * # Safety
+ * Delegates to `xmlReadDoc`; see that function for requirements.
+ */
+struct xmlDoc *xmlRecoverDoc(const uint8_t *cur,
+                             const char *url,
+                             const char *encoding,
+                             int options);
+
+/**
  * Parse a document from a filesystem path, loading the file into memory
  * before delegating to `xmlReadMemory`.
  *
@@ -197,6 +220,14 @@ struct xmlDoc *xmlReadDoc(const uint8_t *cur, const char *url, const char *encod
  * filesystem path that remains live for the duration of this call.
  */
 struct xmlDoc *xmlReadFile(const char *filename, const char *encoding, int options);
+
+/**
+ * Parse a document from a filesystem path in recovery mode.
+ *
+ * # Safety
+ * Delegates to `xmlReadFile`; see that function for requirements.
+ */
+struct xmlDoc *xmlRecoverFile(const char *filename, const char *encoding, int options);
 
 /**
  * Parse an XML document from an existing file descriptor.

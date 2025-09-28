@@ -31,6 +31,8 @@ pub type xmlInputCloseCallback = Option<unsafe extern "C" fn(context: *mut c_voi
 
 static PARSER_INIT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+const XML_PARSE_RECOVER: c_int = 1 << 0;
+
 /// A placeholder implementation of xmlReadMemory.
 ///
 /// This function is one of the main entry points for parsing an XML document
@@ -62,6 +64,21 @@ pub unsafe extern "C" fn xmlReadMemory(
     let doc = unsafe { xmlCtxtReadMemory(ctxt, buffer, size, url, encoding, options) };
     unsafe { xmlFreeParserCtxt(ctxt) };
     doc
+}
+
+/// Parse a buffer in recovery mode, mirroring `xmlRecoverMemory`.
+///
+/// # Safety
+/// Delegates to `xmlReadMemory`; see that function for requirements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlRecoverMemory(
+    buffer: *const c_char,
+    size: c_int,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    unsafe { xmlReadMemory(buffer, size, url, encoding, options | XML_PARSE_RECOVER) }
 }
 
 /// Initialise the global parser state bookkeeping.
@@ -109,6 +126,20 @@ pub unsafe extern "C" fn xmlReadDoc(
     unsafe { xmlReadMemory(cur as *const c_char, len as c_int, url, encoding, options) }
 }
 
+/// Parse a null-terminated buffer in recovery mode.
+///
+/// # Safety
+/// Delegates to `xmlReadDoc`; see that function for requirements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlRecoverDoc(
+    cur: *const u8,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    unsafe { xmlReadDoc(cur, url, encoding, options | XML_PARSE_RECOVER) }
+}
+
 /// Parse a document from a filesystem path, loading the file into memory
 /// before delegating to `xmlReadMemory`.
 ///
@@ -139,6 +170,19 @@ pub unsafe extern "C" fn xmlReadFile(
             options,
         )
     }
+}
+
+/// Parse a document from a filesystem path in recovery mode.
+///
+/// # Safety
+/// Delegates to `xmlReadFile`; see that function for requirements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlRecoverFile(
+    filename: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    unsafe { xmlReadFile(filename, encoding, options | XML_PARSE_RECOVER) }
 }
 
 /// Parse an XML document from an existing file descriptor.
