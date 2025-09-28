@@ -1,11 +1,15 @@
 use crate::doc::{XmlDocument, xmlFreeDoc};
 use crate::tree::xmlDoc;
 use libc::{c_char, c_int, c_void};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs;
 use std::io::Read;
+use std::mem;
 use std::path::PathBuf;
 use std::ptr;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 // This is a placeholder for the parser context struct.
@@ -20,6 +24,9 @@ pub struct xmlParserCtxt {
     pub input_size: c_int,
     pub base_url: *const c_char,
     pub encoding: *const c_char,
+    pub sax: *mut xmlSAXHandler,
+    pub user_data: *mut c_void,
+    pub disableSAX: c_int,
 }
 
 #[allow(non_camel_case_types)]
@@ -29,9 +36,25 @@ pub type xmlInputReadCallback =
 #[allow(non_camel_case_types)]
 pub type xmlInputCloseCallback = Option<unsafe extern "C" fn(context: *mut c_void) -> c_int>;
 
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct xmlSAXHandler {
+    _private: *mut c_void,
+}
+
 static PARSER_INIT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 const XML_PARSE_RECOVER: c_int = 1 << 0;
+
+#[derive(Default)]
+struct PushParserState {
+    buffer: Vec<u8>,
+    stopped: bool,
+    terminated: bool,
+}
+
+static PUSH_PARSER_STATES: Lazy<Mutex<HashMap<usize, PushParserState>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// A placeholder implementation of xmlReadMemory.
 ///
@@ -64,6 +87,146 @@ pub unsafe extern "C" fn xmlReadMemory(
     let doc = unsafe { xmlCtxtReadMemory(ctxt, buffer, size, url, encoding, options) };
     unsafe { xmlFreeParserCtxt(ctxt) };
     doc
+}
+
+/// Create a push-style parser context capable of consuming data incrementally.
+///
+/// # Safety
+/// `chunk` must either be null (when `size` is zero) or reference a readable
+/// memory region with at least `size` bytes. The returned context must be
+/// released with `xmlFreeParserCtxt`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCreatePushParserCtxt(
+    sax: *mut xmlSAXHandler,
+    user_data: *mut c_void,
+    chunk: *const c_char,
+    size: c_int,
+    filename: *const c_char,
+) -> *mut xmlParserCtxt {
+    if size < 0 || (size > 0 && chunk.is_null()) {
+        return ptr::null_mut();
+    }
+
+    let ctxt = unsafe { xmlNewParserCtxt() };
+    if ctxt.is_null() {
+        return ptr::null_mut();
+    }
+
+    let ctxt_ref = unsafe { &mut *ctxt };
+    ctxt_ref.sax = sax;
+    ctxt_ref.user_data = user_data;
+    ctxt_ref.base_url = filename;
+
+    let mut state = PushParserState::default();
+    if size > 0 {
+        let slice = unsafe { std::slice::from_raw_parts(chunk as *const u8, size as usize) };
+        state.buffer.extend_from_slice(slice);
+    }
+
+    register_push_state(ctxt, state);
+
+    ctxt
+}
+
+/// Feed data into an existing push-style parser context.
+///
+/// # Safety
+/// `chunk` must be either null (when `size` is zero) or point to at least
+/// `size` readable bytes. Set `terminate` to a non-zero value once no more data
+/// will be supplied.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlParseChunk(
+    ctxt: *mut xmlParserCtxt,
+    chunk: *const c_char,
+    size: c_int,
+    terminate: c_int,
+) -> c_int {
+    if ctxt.is_null() || size < 0 || (size > 0 && chunk.is_null()) {
+        return -1;
+    }
+
+    let key = ctxt as usize;
+    let (maybe_buffer, was_stopped) = {
+        let mut map = PUSH_PARSER_STATES
+            .lock()
+            .expect("push parser state poisoned");
+        let state = match map.get_mut(&key) {
+            Some(state) => state,
+            None => {
+                return -1;
+            }
+        };
+
+        if state.stopped {
+            (None, true)
+        } else {
+            if size > 0 {
+                let slice =
+                    unsafe { std::slice::from_raw_parts(chunk as *const u8, size as usize) };
+                state.buffer.extend_from_slice(slice);
+            }
+
+            if terminate != 0 {
+                state.terminated = true;
+                (Some(mem::take(&mut state.buffer)), false)
+            } else {
+                (None, false)
+            }
+        }
+    };
+
+    if was_stopped {
+        return -1;
+    }
+
+    if let Some(buffer) = maybe_buffer {
+        if buffer.len() > c_int::MAX as usize {
+            drop(buffer);
+            clear_push_state(ctxt);
+            return -1;
+        }
+
+        let len = buffer.len() as c_int;
+        let doc = unsafe {
+            xmlCtxtReadMemory(
+                ctxt,
+                buffer.as_ptr() as *const c_char,
+                len,
+                (*ctxt).base_url,
+                (*ctxt).encoding,
+                (*ctxt).options,
+            )
+        };
+
+        clear_push_state(ctxt);
+
+        if doc.is_null() { -1 } else { 0 }
+    } else {
+        0
+    }
+}
+
+/// Halt any further parsing activity on the supplied parser context.
+///
+/// # Safety
+/// `ctxt` must be either null or a valid parser context pointer obtained from
+/// one of the Rust constructors.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlStopParser(ctxt: *mut xmlParserCtxt) {
+    if ctxt.is_null() {
+        return;
+    }
+
+    let key = ctxt as usize;
+    if let Ok(mut map) = PUSH_PARSER_STATES.lock()
+        && let Some(state) = map.get_mut(&key)
+    {
+        state.stopped = true;
+    }
+
+    let ctxt_ref = unsafe { &mut *ctxt };
+    ctxt_ref.disableSAX = 2;
+    ctxt_ref.wellFormed = 0;
 }
 
 /// Parse a buffer in recovery mode, mirroring `xmlRecoverMemory`.
@@ -564,6 +727,7 @@ pub unsafe extern "C" fn xmlClearParserCtxt(ctxt: *mut xmlParserCtxt) {
     let ctxt_ref = unsafe { &mut *ctxt };
     unsafe { reset_context_doc(ctxt_ref) };
     reset_context_state(ctxt_ref);
+    clear_push_state(ctxt);
 }
 
 /// Create a parser context for parsing from an in-memory buffer.
@@ -619,6 +783,8 @@ pub unsafe extern "C" fn xmlFreeParserCtxt(ctxt: *mut xmlParserCtxt) {
 
     let mut ctxt = unsafe { Box::from_raw(ctxt) };
     unsafe { reset_context_doc(&mut ctxt) };
+    let ctxt_ptr: *mut xmlParserCtxt = &mut *ctxt;
+    clear_push_state(ctxt_ptr);
 }
 
 /// Create a parser context primed with a null-terminated in-memory document.
@@ -770,6 +936,9 @@ fn new_parser_context(buffer: *const c_char, size: c_int) -> xmlParserCtxt {
         input_size: size,
         base_url: ptr::null(),
         encoding: ptr::null(),
+        sax: ptr::null_mut(),
+        user_data: ptr::null_mut(),
+        disableSAX: 0,
     }
 }
 
@@ -822,4 +991,24 @@ fn reset_context_state(ctxt: &mut xmlParserCtxt) {
     ctxt.input_size = 0;
     ctxt.base_url = ptr::null();
     ctxt.encoding = ptr::null();
+    ctxt.sax = ptr::null_mut();
+    ctxt.user_data = ptr::null_mut();
+    ctxt.disableSAX = 0;
+}
+
+fn register_push_state(ctxt: *mut xmlParserCtxt, state: PushParserState) {
+    let mut map = PUSH_PARSER_STATES
+        .lock()
+        .expect("push parser state mutex poisoned");
+    map.insert(ctxt as usize, state);
+}
+
+fn clear_push_state(ctxt: *mut xmlParserCtxt) {
+    if ctxt.is_null() {
+        return;
+    }
+
+    if let Ok(mut map) = PUSH_PARSER_STATES.lock() {
+        map.remove(&(ctxt as usize));
+    }
 }

@@ -15,6 +15,7 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: `xmlSAXUserParseFile` and `xmlSAXUserParseMemory` validate inputs via the placeholder DOM builder while leaving SAX callbacks unimplemented.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
 - :white_check_mark: `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` reuse the read helpers with recovery parsing enabled.
+- :white_check_mark: Push-mode helpers (`xmlCreatePushParserCtxt`, `xmlParseChunk`, `xmlStopParser`) accumulate streamed input and defer to the placeholder DOM parser on termination.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
 ## Entry points
@@ -35,9 +36,9 @@ progress through Phase 1 of the porting plan.
 | `xmlParseFile` | ✅ Stubbed | Delegates to `xmlReadFile` with default options. |
 | `xmlSAXUserParseFile` | ✅ Stubbed | Validates input using DOM placeholder; callbacks pending. |
 | `xmlSAXUserParseMemory` | ✅ Stubbed | " |
-| `xmlCreatePushParserCtxt` | ❌ Missing | Needs streaming parser implementation. |
-| `xmlParseChunk` | ❌ Missing | Streaming support pending. |
-| `xmlStopParser` | ❌ Missing | Depends on parser state machine. |
+| `xmlCreatePushParserCtxt` | ✅ Stubbed | Buffers push input and reuses `xmlCtxtReadMemory`. |
+| `xmlParseChunk` | ✅ Stubbed | Collects streamed input until termination. |
+| `xmlStopParser` | ✅ Stubbed | Marks the context as stopped and rejects further input. |
 | `xmlResumeParser` | ❌ Missing | " |
 | `xmlClearParserCtxt` | ✅ Stubbed | Drops any owned document and resets parser metadata. |
 | `xmlInitParserCtxt` | ✅ Stubbed | Resets the lightweight Rust context state. |
@@ -54,4 +55,4 @@ progress through Phase 1 of the porting plan.
 
 ## Next steps
 - Introduce a thin abstraction layer that allows C entry points to toggle between Rust and legacy implementations.
-- Prioritise fleshing out the remaining non-streaming helpers before addressing streaming and SAX integration.
+- Replace the placeholder buffering in the push parser with a real streaming state machine and wire SAX callbacks through the Rust scaffolding.

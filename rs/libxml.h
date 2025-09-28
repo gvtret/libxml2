@@ -109,9 +109,9 @@ typedef struct xmlDoc {
   int properties;
 } xmlDoc;
 
-typedef int (*xmlInputReadCallback)(void *context, char *buffer, int len);
-
-typedef int (*xmlInputCloseCallback)(void *context);
+typedef struct xmlSAXHandler {
+  void *_private;
+} xmlSAXHandler;
 
 typedef struct xmlParserCtxt {
   struct xmlDoc *doc;
@@ -121,7 +121,14 @@ typedef struct xmlParserCtxt {
   int input_size;
   const char *base_url;
   const char *encoding;
+  struct xmlSAXHandler *sax;
+  void *user_data;
+  int disableSAX;
 } xmlParserCtxt;
+
+typedef int (*xmlInputReadCallback)(void *context, char *buffer, int len);
+
+typedef int (*xmlInputCloseCallback)(void *context);
 
 /**
  * Allocate a new document populated with the provided XML version.
@@ -159,6 +166,39 @@ struct xmlDoc *xmlReadMemory(const char *buffer,
                              const char *url,
                              const char *encoding,
                              int options);
+
+/**
+ * Create a push-style parser context capable of consuming data incrementally.
+ *
+ * # Safety
+ * `chunk` must either be null (when `size` is zero) or reference a readable
+ * memory region with at least `size` bytes. The returned context must be
+ * released with `xmlFreeParserCtxt`.
+ */
+struct xmlParserCtxt *xmlCreatePushParserCtxt(struct xmlSAXHandler *sax,
+                                              void *user_data,
+                                              const char *chunk,
+                                              int size,
+                                              const char *filename);
+
+/**
+ * Feed data into an existing push-style parser context.
+ *
+ * # Safety
+ * `chunk` must be either null (when `size` is zero) or point to at least
+ * `size` readable bytes. Set `terminate` to a non-zero value once no more data
+ * will be supplied.
+ */
+int xmlParseChunk(struct xmlParserCtxt *ctxt, const char *chunk, int size, int terminate);
+
+/**
+ * Halt any further parsing activity on the supplied parser context.
+ *
+ * # Safety
+ * `ctxt` must be either null or a valid parser context pointer obtained from
+ * one of the Rust constructors.
+ */
+void xmlStopParser(struct xmlParserCtxt *ctxt);
 
 /**
  * Parse a buffer in recovery mode, mirroring `xmlRecoverMemory`.
