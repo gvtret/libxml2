@@ -15,7 +15,7 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: `xmlSAXUserParseFile` and `xmlSAXUserParseMemory` validate inputs via the placeholder DOM builder while leaving SAX callbacks unimplemented.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
 - :white_check_mark: `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` reuse the read helpers with recovery parsing enabled.
-- :white_check_mark: Push-mode helpers (`xmlCreatePushParserCtxt`, `xmlParseChunk`, `xmlStopParser`) accumulate streamed input and defer to the placeholder DOM parser on termination.
+- :white_check_mark: Push-mode helpers (`xmlCreatePushParserCtxt`, `xmlParseChunk`, `xmlStopParser`, `xmlResumeParser`) accumulate streamed input and defer to the placeholder DOM parser on termination.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
 ## Entry points
@@ -39,7 +39,7 @@ progress through Phase 1 of the porting plan.
 | `xmlCreatePushParserCtxt` | ✅ Stubbed | Buffers push input and reuses `xmlCtxtReadMemory`. |
 | `xmlParseChunk` | ✅ Stubbed | Collects streamed input until termination. |
 | `xmlStopParser` | ✅ Stubbed | Marks the context as stopped and rejects further input. |
-| `xmlResumeParser` | ❌ Missing | " |
+| `xmlResumeParser` | ✅ Stubbed | Re-enables buffering for stopped push contexts. |
 | `xmlClearParserCtxt` | ✅ Stubbed | Drops any owned document and resets parser metadata. |
 | `xmlInitParserCtxt` | ✅ Stubbed | Resets the lightweight Rust context state. |
 | `xmlCreateDocParserCtxt` | ✅ Stubbed | Wraps `xmlNewParserCtxt` and records the caller's buffer metadata. |

@@ -229,6 +229,43 @@ pub unsafe extern "C" fn xmlStopParser(ctxt: *mut xmlParserCtxt) {
     ctxt_ref.wellFormed = 0;
 }
 
+/// Resume parsing on a push-style parser context that was previously stopped.
+///
+/// # Safety
+/// `ctxt` must be either null or a valid pointer obtained from one of the Rust
+/// constructors. Returns `0` on success and `-1` if the parser cannot be
+/// resumed (for example, if it has already been terminated).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlResumeParser(ctxt: *mut xmlParserCtxt) -> c_int {
+    if ctxt.is_null() {
+        return -1;
+    }
+
+    let key = ctxt as usize;
+    {
+        let mut map = match PUSH_PARSER_STATES.lock() {
+            Ok(map) => map,
+            Err(_) => return -1,
+        };
+
+        match map.get_mut(&key) {
+            Some(state) if !state.terminated => {
+                state.stopped = false;
+            }
+            Some(_) => return -1,
+            None => return -1,
+        }
+    }
+
+    let ctxt_ref = unsafe { &mut *ctxt };
+    ctxt_ref.disableSAX = 0;
+    if ctxt_ref.wellFormed == 0 {
+        ctxt_ref.wellFormed = 1;
+    }
+
+    0
+}
+
 /// Parse a buffer in recovery mode, mirroring `xmlRecoverMemory`.
 ///
 /// # Safety

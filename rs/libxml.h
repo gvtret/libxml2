@@ -201,6 +201,16 @@ int xmlParseChunk(struct xmlParserCtxt *ctxt, const char *chunk, int size, int t
 void xmlStopParser(struct xmlParserCtxt *ctxt);
 
 /**
+ * Resume parsing on a push-style parser context that was previously stopped.
+ *
+ * # Safety
+ * `ctxt` must be either null or a valid pointer obtained from one of the Rust
+ * constructors. Returns `0` on success and `-1` if the parser cannot be
+ * resumed (for example, if it has already been terminated).
+ */
+int xmlResumeParser(struct xmlParserCtxt *ctxt);
+
+/**
  * Parse a buffer in recovery mode, mirroring `xmlRecoverMemory`.
  *
  * # Safety

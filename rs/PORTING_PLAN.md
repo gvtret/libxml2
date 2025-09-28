@@ -89,6 +89,7 @@
 - Stubbed `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` to honour recovery-mode parsing via the Rust read helpers.
 - Stubbed `xmlSAXUserParseFile` and `xmlSAXUserParseMemory` to validate inputs while deferring SAX callback wiring.
 - Added push-mode shims (`xmlCreatePushParserCtxt`, `xmlParseChunk`, `xmlStopParser`) that buffer streamed input before deferring to the placeholder DOM builder.
+- Implemented `xmlResumeParser` so stopped push contexts can accept additional data before termination.
 
 ## Tooling Notes
 - The helper script `rs/devtools.sh` runs formatting, lint, and header-generation checks; wire this into Meson/CMake and future
