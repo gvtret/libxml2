@@ -20,7 +20,7 @@ fi
 echo "Running cbindgen to verify libxml.h"
 tmp_header="$(mktemp)"
 trap 'rm -f "${tmp_header}"' EXIT
-cbindgen --config cbindgen.toml --crate libxml2-rs --output "${tmp_header}"
+cbindgen --config cbindgen.toml --crate libxml2 --output "${tmp_header}"
 
 if ! diff -u libxml.h "${tmp_header}"; then
     echo "libxml.h is out of date; regenerate it with cbindgen." >&2

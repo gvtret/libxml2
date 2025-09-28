@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/build-rs-legacy"
 
-PRELOAD_MODE="${LIBXML2_RS_PRELOAD:-0}"
+PRELOAD_MODE="${LIBXML2_PRELOAD:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --preload)
@@ -31,7 +31,7 @@ cmake --build "${BUILD_DIR}"
 if [[ "${PRELOAD_MODE}" == "1" ]]; then
   cargo build --manifest-path "${REPO_ROOT}/rs/Cargo.toml"
 
-  export LD_PRELOAD="${REPO_ROOT}/rs/target/debug/liblibxml2_rs.so"
+  export LD_PRELOAD="${REPO_ROOT}/rs/target/debug/libxml2.so"
   if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
     export LD_LIBRARY_PATH="${BUILD_DIR}:${LD_LIBRARY_PATH}"
   else
