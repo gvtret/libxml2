@@ -109,6 +109,10 @@ typedef struct xmlDoc {
   int properties;
 } xmlDoc;
 
+typedef int (*xmlInputReadCallback)(void *context, char *buffer, int len);
+
+typedef int (*xmlInputCloseCallback)(void *context);
+
 typedef struct xmlParserCtxt {
   struct xmlDoc *doc;
   int wellFormed;
@@ -204,6 +208,21 @@ struct xmlDoc *xmlReadFile(const char *filename, const char *encoding, int optio
 struct xmlDoc *xmlReadFd(int fd, const char *url, const char *encoding, int options);
 
 /**
+ * Parse a document from custom I/O callbacks, mirroring `xmlReadIO`.
+ *
+ * # Safety
+ * `ioread` must be a valid callback that reads from `ioctx` into the provided
+ * buffer. `ioclose`, when non-null, is invoked after reading completes (even
+ * on error). The returned document must be released with `xmlFreeDoc`.
+ */
+struct xmlDoc *xmlReadIO(xmlInputReadCallback ioread,
+                         xmlInputCloseCallback ioclose,
+                         void *ioctx,
+                         const char *url,
+                         const char *encoding,
+                         int options);
+
+/**
  * Parse a document held entirely in memory, mirroring libxml2's legacy API.
  *
  * # Safety
@@ -277,6 +296,22 @@ struct xmlDoc *xmlCtxtReadFile(struct xmlParserCtxt *ctxt,
  */
 struct xmlDoc *xmlCtxtReadFd(struct xmlParserCtxt *ctxt,
                              int fd,
+                             const char *url,
+                             const char *encoding,
+                             int options);
+
+/**
+ * Parse an XML document into an existing context using custom I/O callbacks.
+ *
+ * # Safety
+ * `ctxt` must be a valid parser context and `ioread` must read from `ioctx`
+ * according to libxml2's callback contracts. `ioclose`, when provided, is
+ * invoked after reading completes (even on error).
+ */
+struct xmlDoc *xmlCtxtReadIO(struct xmlParserCtxt *ctxt,
+                             xmlInputReadCallback ioread,
+                             xmlInputCloseCallback ioclose,
+                             void *ioctx,
                              const char *url,
                              const char *encoding,
                              int options);

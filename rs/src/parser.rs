@@ -1,6 +1,6 @@
 use crate::doc::XmlDocument;
 use crate::tree::xmlDoc;
-use libc::{c_char, c_int};
+use libc::{c_char, c_int, c_void};
 use std::ffi::CStr;
 use std::fs;
 use std::io::Read;
@@ -21,6 +21,13 @@ pub struct xmlParserCtxt {
     pub base_url: *const c_char,
     pub encoding: *const c_char,
 }
+
+#[allow(non_camel_case_types)]
+pub type xmlInputReadCallback =
+    Option<unsafe extern "C" fn(context: *mut c_void, buffer: *mut c_char, len: c_int) -> c_int>;
+
+#[allow(non_camel_case_types)]
+pub type xmlInputCloseCallback = Option<unsafe extern "C" fn(context: *mut c_void) -> c_int>;
 
 static PARSER_INIT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -158,6 +165,41 @@ pub unsafe extern "C" fn xmlReadFd(
     let doc = unsafe { xmlCtxtReadFd(ctxt, fd, url, encoding, options) };
     unsafe { xmlFreeParserCtxt(ctxt) };
     doc
+}
+
+/// Parse a document from custom I/O callbacks, mirroring `xmlReadIO`.
+///
+/// # Safety
+/// `ioread` must be a valid callback that reads from `ioctx` into the provided
+/// buffer. `ioclose`, when non-null, is invoked after reading completes (even
+/// on error). The returned document must be released with `xmlFreeDoc`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlReadIO(
+    ioread: xmlInputReadCallback,
+    ioclose: xmlInputCloseCallback,
+    ioctx: *mut c_void,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    let buffer = match unsafe { read_io_buffer(ioread, ioclose, ioctx) } {
+        Some(buf) => buf,
+        None => return ptr::null_mut(),
+    };
+
+    if buffer.len() > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        xmlReadMemory(
+            buffer.as_ptr() as *const c_char,
+            buffer.len() as c_int,
+            url,
+            encoding,
+            options,
+        )
+    }
 }
 
 /// Parse a document held entirely in memory, mirroring libxml2's legacy API.
@@ -311,6 +353,47 @@ pub unsafe extern "C" fn xmlCtxtReadFd(
     }
 
     let buffer = match unsafe { read_fd_buffer(fd) } {
+        Some(buf) => buf,
+        None => return ptr::null_mut(),
+    };
+
+    if buffer.len() > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        xmlCtxtReadMemory(
+            ctxt,
+            buffer.as_ptr() as *const c_char,
+            buffer.len() as c_int,
+            url,
+            encoding,
+            options,
+        )
+    }
+}
+
+/// Parse an XML document into an existing context using custom I/O callbacks.
+///
+/// # Safety
+/// `ctxt` must be a valid parser context and `ioread` must read from `ioctx`
+/// according to libxml2's callback contracts. `ioclose`, when provided, is
+/// invoked after reading completes (even on error).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCtxtReadIO(
+    ctxt: *mut xmlParserCtxt,
+    ioread: xmlInputReadCallback,
+    ioclose: xmlInputCloseCallback,
+    ioctx: *mut c_void,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    if ctxt.is_null() {
+        return ptr::null_mut();
+    }
+
+    let buffer = match unsafe { read_io_buffer(ioread, ioclose, ioctx) } {
         Some(buf) => buf,
         None => return ptr::null_mut(),
     };
@@ -517,6 +600,62 @@ unsafe fn read_fd_buffer(fd: c_int) -> Option<Vec<u8>> {
         let _ = fd;
         None
     }
+}
+
+unsafe fn read_io_buffer(
+    ioread: xmlInputReadCallback,
+    ioclose: xmlInputCloseCallback,
+    ioctx: *mut c_void,
+) -> Option<Vec<u8>> {
+    const IO_CHUNK_SIZE: usize = 4096;
+
+    let Some(read_cb) = ioread else {
+        if let Some(close_cb) = ioclose {
+            unsafe {
+                close_cb(ioctx);
+            }
+        }
+        return None;
+    };
+
+    let mut chunk = [0u8; IO_CHUNK_SIZE];
+    let mut data = Vec::new();
+    let mut had_error = false;
+
+    loop {
+        let read_rc = unsafe {
+            read_cb(
+                ioctx,
+                chunk.as_mut_ptr() as *mut c_char,
+                IO_CHUNK_SIZE as c_int,
+            )
+        };
+
+        if read_rc == 0 {
+            break;
+        }
+
+        if read_rc < 0 {
+            had_error = true;
+            break;
+        }
+
+        let read_usize = read_rc as usize;
+        if read_usize > IO_CHUNK_SIZE {
+            had_error = true;
+            break;
+        }
+
+        data.extend_from_slice(&chunk[..read_usize]);
+    }
+
+    if let Some(close_cb) = ioclose {
+        unsafe {
+            close_cb(ioctx);
+        }
+    }
+
+    if had_error { None } else { Some(data) }
 }
 
 fn new_parser_context(buffer: *const c_char, size: c_int) -> xmlParserCtxt {

@@ -11,6 +11,7 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` reuse the Rust `xmlReadMemory` stub for in-memory parsing.
 - :white_check_mark: `xmlReadFile`/`xmlParseFile` now load the target file and reuse the in-memory stub to provide consistent behaviour.
 - :white_check_mark: `xmlReadFd` and `xmlCtxtReadFd` read from existing descriptors without taking ownership and delegate to the in-memory flow.
+- :white_check_mark: `xmlReadIO` and `xmlCtxtReadIO` bridge custom I/O callbacks through the in-memory placeholder parser while ensuring callbacks are closed.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
@@ -22,9 +23,9 @@ progress through Phase 1 of the porting plan.
 | `xmlReadFile` | ✅ Stubbed | Reads the file then calls `xmlReadMemory`. |
 | `xmlReadFd` | ✅ Stubbed | Reads from descriptor without closing and reuses `xmlReadMemory`. |
 | `xmlReadDoc` | ✅ Stubbed | Delegates to `xmlReadMemory`. |
-| `xmlReadIO` | ❌ Missing | Blocked on Rust `xmlIO` port. |
+| `xmlReadIO` | ✅ Stubbed | Reads callback data into memory before parsing. |
 | `xmlCtxtReadMemory` | ✅ Stubbed | Delegates to the Rust placeholder parser. |
-| `xmlCtxtReadIO` | ❌ Missing | Requires context + I/O integration. |
+| `xmlCtxtReadIO` | ✅ Stubbed | Reuses callback bridge with existing context. |
 | `xmlCtxtReadFd` | ✅ Stubbed | Loads descriptor contents then routes through `xmlCtxtReadMemory`. |
 | `xmlCtxtReadFile` | ✅ Stubbed | Loads from disk then routes through `xmlCtxtReadMemory`. |
 | `xmlParseDoc` | ✅ Stubbed | Reuses `xmlReadDoc` stub. |
@@ -50,6 +51,5 @@ progress through Phase 1 of the porting plan.
 | `xmlRecoverFile` | ❌ Missing | " |
 
 ## Next steps
-- Extend the context-backed surface by stubbing `xmlCtxtReadFd`/`xmlCtxtReadIO` once I/O abstractions are available.
 - Introduce a thin abstraction layer that allows C entry points to toggle between Rust and legacy implementations.
 - Prioritise fleshing out the remaining non-streaming helpers before addressing streaming and SAX integration.
