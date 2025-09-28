@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-typedef enum ExtxmlAttributeType {
+typedef enum xmlAttributeType {
   AttributeCdata = 1,
   AttributeId,
   AttributeIdref,
@@ -14,9 +14,9 @@ typedef enum ExtxmlAttributeType {
   AttributeNmtokens,
   AttributeEnumeration,
   AttributeNotation,
-} ExtxmlAttributeType;
+} xmlAttributeType;
 
-typedef enum ExtxmlElementType {
+typedef enum xmlElementType {
   ElementNode = 1,
   AttributeNode = 2,
   TextNode = 3,
@@ -37,66 +37,66 @@ typedef enum ExtxmlElementType {
   NamespaceDecl = 18,
   XincludeStart = 19,
   XincludeEnd = 20,
-} ExtxmlElementType;
+} xmlElementType;
 
-typedef struct ExtxmlNs {
-  struct ExtxmlNs *next;
-  enum ExtxmlElementType type_;
+typedef struct xmlNs {
+  struct xmlNs *next;
+  enum xmlElementType type_;
   const uint8_t *href;
   const uint8_t *prefix;
   void *_private;
-  struct ExtxmlDoc *context;
-} ExtxmlNs;
+  struct xmlDoc *context;
+} xmlNs;
 
-typedef struct ExtxmlAttr {
+typedef struct xmlAttr {
   void *_private;
-  enum ExtxmlElementType type_;
+  enum xmlElementType type_;
   const uint8_t *name;
-  struct ExtxmlNode *children;
-  struct ExtxmlNode *last;
-  struct ExtxmlNode *parent;
-  struct ExtxmlAttr *next;
-  struct ExtxmlAttr *prev;
-  struct ExtxmlDoc *doc;
-  struct ExtxmlNs *ns;
-  enum ExtxmlAttributeType atype;
+  struct xmlNode *children;
+  struct xmlNode *last;
+  struct xmlNode *parent;
+  struct xmlAttr *next;
+  struct xmlAttr *prev;
+  struct xmlDoc *doc;
+  struct xmlNs *ns;
+  enum xmlAttributeType atype;
   void *psvi;
-} ExtxmlAttr;
+} xmlAttr;
 
-typedef struct ExtxmlNode {
+typedef struct xmlNode {
   void *_private;
-  enum ExtxmlElementType type_;
+  enum xmlElementType type_;
   const uint8_t *name;
-  struct ExtxmlNode *children;
-  struct ExtxmlNode *last;
-  struct ExtxmlNode *parent;
-  struct ExtxmlNode *next;
-  struct ExtxmlNode *prev;
-  struct ExtxmlDoc *doc;
-  struct ExtxmlNs *ns;
+  struct xmlNode *children;
+  struct xmlNode *last;
+  struct xmlNode *parent;
+  struct xmlNode *next;
+  struct xmlNode *prev;
+  struct xmlDoc *doc;
+  struct xmlNs *ns;
   uint8_t *content;
-  struct ExtxmlAttr *properties;
-  struct ExtxmlNs *nsDef;
+  struct xmlAttr *properties;
+  struct xmlNs *nsDef;
   void *psvi;
   unsigned short line;
   unsigned short extra;
-} ExtxmlNode;
+} xmlNode;
 
-typedef struct ExtxmlDoc {
+typedef struct xmlDoc {
   void *_private;
-  enum ExtxmlElementType type_;
+  enum xmlElementType type_;
   char *name;
-  struct ExtxmlNode *children;
-  struct ExtxmlNode *last;
-  struct ExtxmlNode *parent;
-  struct ExtxmlNode *next;
-  struct ExtxmlNode *prev;
-  struct ExtxmlDoc *doc;
+  struct xmlNode *children;
+  struct xmlNode *last;
+  struct xmlNode *parent;
+  struct xmlNode *next;
+  struct xmlNode *prev;
+  struct xmlDoc *doc;
   int compression;
   int standalone;
   void *intSubset;
   void *extSubset;
-  struct ExtxmlNs *oldNs;
+  struct xmlNs *oldNs;
   const uint8_t *version;
   const uint8_t *encoding;
   void *ids;
@@ -107,17 +107,17 @@ typedef struct ExtxmlDoc {
   void *psvi;
   int parseFlags;
   int properties;
-} ExtxmlDoc;
+} xmlDoc;
 
-typedef struct ExtxmlParserCtxt {
-  struct ExtxmlDoc *doc;
+typedef struct xmlParserCtxt {
+  struct xmlDoc *doc;
   int wellFormed;
   int options;
   const char *input;
   int input_size;
   const char *base_url;
   const char *encoding;
-} ExtxmlParserCtxt;
+} xmlParserCtxt;
 
 /**
  * Allocate a new document populated with the provided XML version.
@@ -126,7 +126,7 @@ typedef struct ExtxmlParserCtxt {
  * `version` must be either null or a pointer to a valid null-terminated
  * string.
  */
-struct ExtxmlDoc *xmlNewDoc(const uint8_t *version);
+struct xmlDoc *xmlNewDoc(const uint8_t *version);
 
 /**
  * Frees the memory allocated for an xmlDoc.
@@ -135,7 +135,7 @@ struct ExtxmlDoc *xmlNewDoc(const uint8_t *version);
  * The caller must ensure that `doc` either originated from one of the Rust
  * constructors and that it is not freed multiple times.
  */
-void xmlFreeDoc(struct ExtxmlDoc *doc);
+void xmlFreeDoc(struct xmlDoc *doc);
 
 /**
  * A placeholder implementation of xmlReadMemory.
@@ -150,11 +150,11 @@ void xmlFreeDoc(struct ExtxmlDoc *doc);
  * strings (which may be null) following libxml2's C API contracts. The
  * returned pointer must be released with `xmlFreeDoc`.
  */
-struct ExtxmlDoc *xmlReadMemory(const char *buffer,
-                                int size,
-                                const char *url,
-                                const char *encoding,
-                                int options);
+struct xmlDoc *xmlReadMemory(const char *buffer,
+                             int size,
+                             const char *url,
+                             const char *encoding,
+                             int options);
 
 /**
  * Create a parser context for parsing from an in-memory buffer.
@@ -164,7 +164,7 @@ struct ExtxmlDoc *xmlReadMemory(const char *buffer,
  * `size` bytes of readable memory. The returned context must eventually be
  * released with `xmlFreeParserCtxt`.
  */
-struct ExtxmlParserCtxt *xmlCreateMemoryParserCtxt(const char *buffer, int size);
+struct xmlParserCtxt *xmlCreateMemoryParserCtxt(const char *buffer, int size);
 
 /**
  * Parse a document using the supplied parser context, synthesising a shell
@@ -173,7 +173,7 @@ struct ExtxmlParserCtxt *xmlCreateMemoryParserCtxt(const char *buffer, int size)
  * # Safety
  * `ctxt` must be a valid pointer obtained from `xmlCreateMemoryParserCtxt`.
  */
-int xmlParseDocument(struct ExtxmlParserCtxt *ctxt);
+int xmlParseDocument(struct xmlParserCtxt *ctxt);
 
 /**
  * Release the resources held by a parser context.
@@ -181,4 +181,4 @@ int xmlParseDocument(struct ExtxmlParserCtxt *ctxt);
  * # Safety
  * `ctxt` must be null or a pointer obtained from `xmlCreateMemoryParserCtxt`.
  */
-void xmlFreeParserCtxt(struct ExtxmlParserCtxt *ctxt);
+void xmlFreeParserCtxt(struct xmlParserCtxt *ctxt);
