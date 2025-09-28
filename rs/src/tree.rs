@@ -1,3 +1,6 @@
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+
 // libxml2-rust/src/tree.rs
 
 // This file contains the Rust definitions for the XML tree data structures,
@@ -85,7 +88,7 @@ pub struct xmlDoc {
     pub intSubset: *mut c_void, // xmlDtd
     pub extSubset: *mut c_void, // xmlDtd
     pub oldNs: *mut xmlNs,
-    pub version: *const u8, // xmlChar
+    pub version: *const u8,  // xmlChar
     pub encoding: *const u8, // xmlChar
     pub ids: *mut c_void,
     pub refs: *mut c_void,
@@ -101,8 +104,8 @@ pub struct xmlDoc {
 pub struct xmlNs {
     pub next: *mut xmlNs,
     pub type_: xmlElementType, // xmlNsType is an alias for xmlElementType
-    pub href: *const u8, // const xmlChar*
-    pub prefix: *const u8, // const xmlChar*
+    pub href: *const u8,       // const xmlChar*
+    pub prefix: *const u8,     // const xmlChar*
     pub _private: *mut c_void,
     pub context: *mut xmlDoc,
 }

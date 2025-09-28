@@ -1,8 +1,10 @@
-use crate::tree::{xmlDoc, xmlElementType, xmlNode};
-use libc::{c_char, c_int, c_void};
+use crate::doc::XmlDocument;
+use crate::tree::xmlDoc;
+use libc::{c_char, c_int};
 
 // This is a placeholder for the parser context struct.
 // It will be filled out as the implementation progresses.
+#[allow(non_snake_case)]
 #[repr(C)]
 pub struct xmlParserCtxt {
     pub doc: *mut xmlDoc,
@@ -16,6 +18,11 @@ pub struct xmlParserCtxt {
 /// This function is one of the main entry points for parsing an XML document
 /// from a buffer in memory. For now, it creates and returns a dummy document
 /// to allow us to test the FFI linkage.
+///
+/// # Safety
+/// The caller must supply valid pointers for the input buffer and optional
+/// strings (which may be null) following libxml2's C API contracts. The
+/// returned pointer must be released with `xmlFreeDoc`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xmlReadMemory(
     _buffer: *const c_char,
@@ -26,51 +33,22 @@ pub unsafe extern "C" fn xmlReadMemory(
 ) -> *mut xmlDoc {
     println!("[Rust] xmlReadMemory called (dummy implementation)");
 
-    // Allocate a new xmlDoc on the heap using Box for proper memory management.
-    let doc = Box::new(xmlDoc {
-        _private: std::ptr::null_mut(),
-        type_: xmlElementType::DocumentNode,
-        name: std::ptr::null_mut(),
-        children: std::ptr::null_mut(),
-        last: std::ptr::null_mut(),
-        parent: std::ptr::null_mut(),
-        next: std::ptr::null_mut(),
-        prev: std::ptr::null_mut(),
-        doc: std::ptr::null_mut(), // This will be set to point to itself.
-        compression: 0,
-        standalone: 1,
-        intSubset: std::ptr::null_mut(),
-        extSubset: std::ptr::null_mut(),
-        oldNs: std::ptr::null_mut(),
-        version: "1.0".as_ptr(),
-        encoding: "UTF-8".as_ptr(),
-        ids: std::ptr::null_mut(),
-        refs: std::ptr::null_mut(),
-        URL: _url as *const u8,
-        charset: 0,
-        dict: std::ptr::null_mut(),
-        psvi: std::ptr::null_mut(),
-        parseFlags: options,
-        properties: 0,
-    });
-
-    // Convert the Box into a raw pointer to pass to C.
-    // The C code is now responsible for this memory.
-    let doc_ptr = Box::into_raw(doc);
-    (*doc_ptr).doc = doc_ptr;
-
-    doc_ptr
+    let doc = XmlDocument::new(options, _url);
+    doc.into_raw()
 }
 
 /// Frees the memory allocated for an xmlDoc.
 ///
 /// This function is essential for preventing memory leaks when the C test code
 /// cleans up the documents created by `xmlReadMemory`.
+///
+/// # Safety
+/// The caller must ensure that `doc` either originated from `xmlReadMemory`
+/// (or another Rust-owned allocator) and that it is not freed multiple times.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xmlFreeDoc(doc: *mut xmlDoc) {
-    if !doc.is_null() {
+    if let Some(doc) = unsafe { XmlDocument::from_raw(doc) } {
         println!("[Rust] xmlFreeDoc called");
-        // Re-Box the raw pointer to allow Rust to deallocate it properly.
-        let _ = Box::from_raw(doc);
+        drop(doc);
     }
 }
