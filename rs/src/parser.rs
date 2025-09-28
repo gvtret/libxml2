@@ -48,28 +48,9 @@ pub unsafe extern "C" fn xmlReadMemory(
         return ptr::null_mut();
     }
 
-    unsafe {
-        (*ctxt).options = options;
-        (*ctxt).base_url = url;
-        (*ctxt).encoding = encoding;
-    }
-
-    let parse_rc = unsafe { xmlParseDocument(ctxt) };
-    let well_formed = unsafe { (*ctxt).wellFormed };
-    let doc_ptr = unsafe { (*ctxt).doc };
-    unsafe {
-        (*ctxt).doc = ptr::null_mut();
-        xmlFreeParserCtxt(ctxt);
-    }
-
-    if parse_rc != 0 || well_formed == 0 || doc_ptr.is_null() {
-        if let Some(doc) = unsafe { XmlDocument::from_raw(doc_ptr) } {
-            drop(doc);
-        }
-        return ptr::null_mut();
-    }
-
-    doc_ptr
+    let doc = unsafe { xmlCtxtReadMemory(ctxt, buffer, size, url, encoding, options) };
+    unsafe { xmlFreeParserCtxt(ctxt) };
+    doc
 }
 
 /// Parse a full XML document provided as a null-terminated UTF-8 buffer.
@@ -160,6 +141,108 @@ pub unsafe extern "C" fn xmlParseFile(filename: *const c_char) -> *mut xmlDoc {
     unsafe { xmlReadFile(filename, ptr::null(), 0) }
 }
 
+/// Parse XML content into the provided parser context from an in-memory buffer.
+///
+/// # Safety
+/// `ctxt` must be a valid pointer obtained from `xmlCreateMemoryParserCtxt` (or an
+/// equivalent constructor once streaming support lands).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCtxtReadMemory(
+    ctxt: *mut xmlParserCtxt,
+    buffer: *const c_char,
+    size: c_int,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    if ctxt.is_null() || size < 0 || (size > 0 && buffer.is_null()) {
+        return ptr::null_mut();
+    }
+
+    let ctxt_ref = unsafe { &mut *ctxt };
+    unsafe { reset_context_doc(ctxt_ref) };
+
+    ctxt_ref.input = buffer;
+    ctxt_ref.input_size = size;
+    ctxt_ref.base_url = url;
+    ctxt_ref.encoding = encoding;
+    ctxt_ref.options = options;
+
+    let parse_rc = unsafe { xmlParseDocument(ctxt) };
+    let doc = unsafe { finalize_context_parse(ctxt_ref, parse_rc) };
+
+    // The memory buffer is owned by the caller; clear our borrowed reference.
+    ctxt_ref.input = ptr::null();
+    ctxt_ref.input_size = 0;
+
+    doc
+}
+
+/// Parse a null-terminated document string using an existing parser context.
+///
+/// # Safety
+/// `cur` must point to a valid, null-terminated buffer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCtxtReadDoc(
+    ctxt: *mut xmlParserCtxt,
+    cur: *const u8,
+    url: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    if cur.is_null() {
+        return ptr::null_mut();
+    }
+
+    let len = unsafe { libc::strlen(cur as *const c_char) };
+    if len > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        xmlCtxtReadMemory(
+            ctxt,
+            cur as *const c_char,
+            len as c_int,
+            url,
+            encoding,
+            options,
+        )
+    }
+}
+
+/// Load and parse a document from a file path using the supplied parser context.
+///
+/// # Safety
+/// `filename` must be a valid null-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn xmlCtxtReadFile(
+    ctxt: *mut xmlParserCtxt,
+    filename: *const c_char,
+    encoding: *const c_char,
+    options: c_int,
+) -> *mut xmlDoc {
+    let buffer = match unsafe { read_file_buffer(filename) } {
+        Some(buf) => buf,
+        None => return ptr::null_mut(),
+    };
+
+    if buffer.len() > c_int::MAX as usize {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        xmlCtxtReadMemory(
+            ctxt,
+            buffer.as_ptr() as *const c_char,
+            buffer.len() as c_int,
+            filename,
+            encoding,
+            options,
+        )
+    }
+}
+
 /// Create a parser context for parsing from an in-memory buffer.
 ///
 /// # Safety
@@ -222,12 +305,7 @@ pub unsafe extern "C" fn xmlFreeParserCtxt(ctxt: *mut xmlParserCtxt) {
     }
 
     let mut ctxt = unsafe { Box::from_raw(ctxt) };
-    if !ctxt.doc.is_null() {
-        if let Some(doc) = unsafe { XmlDocument::from_raw(ctxt.doc) } {
-            drop(doc);
-        }
-        ctxt.doc = ptr::null_mut();
-    }
+    unsafe { reset_context_doc(&mut ctxt) };
 }
 
 unsafe fn read_file_buffer(filename: *const c_char) -> Option<Vec<u8>> {
@@ -254,4 +332,30 @@ fn pathbuf_from_cstr(cstr: &CStr) -> Option<PathBuf> {
         let string = cstr.to_str().ok()?;
         Some(PathBuf::from(string))
     }
+}
+
+unsafe fn reset_context_doc(ctxt: &mut xmlParserCtxt) {
+    if ctxt.doc.is_null() {
+        return;
+    }
+
+    if let Some(doc) = unsafe { XmlDocument::from_raw(ctxt.doc) } {
+        drop(doc);
+    }
+    ctxt.doc = ptr::null_mut();
+}
+
+unsafe fn finalize_context_parse(ctxt: &mut xmlParserCtxt, parse_rc: c_int) -> *mut xmlDoc {
+    let well_formed = ctxt.wellFormed;
+    let doc_ptr = ctxt.doc;
+    ctxt.doc = ptr::null_mut();
+
+    if parse_rc != 0 || well_formed == 0 || doc_ptr.is_null() {
+        if let Some(doc) = unsafe { XmlDocument::from_raw(doc_ptr) } {
+            drop(doc);
+        }
+        return ptr::null_mut();
+    }
+
+    doc_ptr
 }

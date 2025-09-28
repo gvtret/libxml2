@@ -8,7 +8,8 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: `xmlFreeDoc` frees the dummy document allocation through the new RAII wrapper.
 - :white_check_mark: Parser context lifecycle helpers (`xmlCreateMemoryParserCtxt`, `xmlParseDocument`, `xmlFreeParserCtxt`) are now stubbed to retain metadata and manage document ownership in Rust.
 - :white_check_mark: `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` reuse the Rust `xmlReadMemory` stub for in-memory parsing.
-- :white_check_mark: `xmlReadFile` and `xmlParseFile` now load the target file and reuse the in-memory stub to provide consistent behaviour.
+- :white_check_mark: `xmlReadFile`/`xmlParseFile` now load the target file and reuse the in-memory stub to provide consistent behaviour.
+- :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
 ## Entry points
@@ -20,10 +21,10 @@ progress through Phase 1 of the porting plan.
 | `xmlReadFd` | ❌ Missing | Requires Rust I/O abstraction (Phase 4 dependency). |
 | `xmlReadDoc` | ✅ Stubbed | Delegates to `xmlReadMemory`. |
 | `xmlReadIO` | ❌ Missing | Blocked on Rust `xmlIO` port. |
-| `xmlCtxtReadMemory` | ❌ Missing | Depends on parser context modelling. |
+| `xmlCtxtReadMemory` | ✅ Stubbed | Delegates to the Rust placeholder parser. |
 | `xmlCtxtReadIO` | ❌ Missing | Requires context + I/O integration. |
 | `xmlCtxtReadFd` | ❌ Missing | " |
-| `xmlCtxtReadFile` | ❌ Missing | " |
+| `xmlCtxtReadFile` | ✅ Stubbed | Loads from disk then routes through `xmlCtxtReadMemory`. |
 | `xmlParseDoc` | ✅ Stubbed | Reuses `xmlReadDoc` stub. |
 | `xmlParseMemory` | ✅ Stubbed | Routes to `xmlReadMemory`. |
 | `xmlParseFile` | ✅ Stubbed | Delegates to `xmlReadFile` with default options. |
@@ -46,7 +47,6 @@ progress through Phase 1 of the porting plan.
 | `xmlRecoverFile` | ❌ Missing | " |
 
 ## Next steps
-- Flesh out `xmlParserCtxt` representation in Rust so that context-based entry points can be stubbed.
+- Extend the context-backed surface by stubbing `xmlCtxtReadFd`/`xmlCtxtReadIO` once I/O abstractions are available.
 - Introduce a thin abstraction layer that allows C entry points to toggle between Rust and legacy implementations.
-- Prioritise fleshing out the remaining non-streaming helpers (`xmlReadFile`, `xmlParseFile`, etc.) to build confidence before
-addressing streaming and SAX integration.
+- Prioritise fleshing out the remaining non-streaming helpers before addressing streaming and SAX integration.

@@ -82,6 +82,7 @@
  shell documents while preserving the existing FFI contracts.
 - Extended the in-memory parsing surface by stubbing `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` on top of the Rust `xmlReadMemory` implementation.
 - Routed `xmlReadFile` and `xmlParseFile` through the Rust stubs so filesystem-based entry points behave consistently with the in-memory helpers.
+- Stubbed the context-based helpers (`xmlCtxtReadMemory`, `xmlCtxtReadDoc`, `xmlCtxtReadFile`) to drive the placeholder parser via existing contexts.
 
 ## Tooling Notes
 - The helper script `rs/devtools.sh` runs formatting, lint, and header-generation checks; wire this into Meson/CMake and future

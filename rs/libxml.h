@@ -205,6 +205,43 @@ struct xmlDoc *xmlParseDoc(const uint8_t *cur);
 struct xmlDoc *xmlParseFile(const char *filename);
 
 /**
+ * Parse XML content into the provided parser context from an in-memory buffer.
+ *
+ * # Safety
+ * `ctxt` must be a valid pointer obtained from `xmlCreateMemoryParserCtxt` (or an
+ * equivalent constructor once streaming support lands).
+ */
+struct xmlDoc *xmlCtxtReadMemory(struct xmlParserCtxt *ctxt,
+                                 const char *buffer,
+                                 int size,
+                                 const char *url,
+                                 const char *encoding,
+                                 int options);
+
+/**
+ * Parse a null-terminated document string using an existing parser context.
+ *
+ * # Safety
+ * `cur` must point to a valid, null-terminated buffer.
+ */
+struct xmlDoc *xmlCtxtReadDoc(struct xmlParserCtxt *ctxt,
+                              const uint8_t *cur,
+                              const char *url,
+                              const char *encoding,
+                              int options);
+
+/**
+ * Load and parse a document from a file path using the supplied parser context.
+ *
+ * # Safety
+ * `filename` must be a valid null-terminated string.
+ */
+struct xmlDoc *xmlCtxtReadFile(struct xmlParserCtxt *ctxt,
+                               const char *filename,
+                               const char *encoding,
+                               int options);
+
+/**
  * Create a parser context for parsing from an in-memory buffer.
  *
  * # Safety
