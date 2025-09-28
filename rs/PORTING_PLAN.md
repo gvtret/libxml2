@@ -17,7 +17,7 @@
 ### Existing Rust scaffolding
 - `rs/src/tree.rs` defines Rust FFI representations of core structs (`xmlDoc`, `xmlNode`, `xmlAttr`, namespaces) matching the C layout.
 - `rs/src/parser.rs` sketches FFI entry points such as `xmlReadMemory` and `xmlFreeDoc`, demonstrating ownership transfer between Rust and C.
-- `rs/libxml2_rs.h` mirrors the Rust FFI types for C callers and is the temporary header until code generation (`cbindgen`) is integrated.
+- `rs/libxml.h` mirrors the Rust FFI types for C callers and is generated via `cbindgen` to keep the temporary header aligned with the Rust definitions.
 
 ## Guiding Principles
 1. **Preserve ABI/ABI**: Every Rust module must expose C-compatible symbols whose signatures remain byte-for-byte compatible with the legacy headers.
@@ -49,7 +49,7 @@
 
 ### Phase 5 – Build & packaging integration
 - Extend Autotools, Meson, and CMake scripts to build the Rust crate and link it into the shared library.
-- Generate canonical headers from Rust definitions using `cbindgen`, replacing `libxml2_rs.h` once stable.
+- Generate canonical headers from Rust definitions using `cbindgen`, keeping `libxml.h` up to date as the Rust implementation expands.
 - Provide configure-time switches (e.g., `--with-rust-core`) and CI matrix entries that compile both variants.
 
 ## Testing & Compatibility Plan
@@ -72,14 +72,16 @@
 ## Immediate Next Steps
 - Audit `rs/src/parser.rs` for completeness against `parser.c` entry points and log missing functions. ✅ See `rs/docs/parser_audit.md`.
 - Prototype a Rust-owned document allocator with drop semantics mirroring `xmlFreeDoc`. ✅ Implemented via `XmlDocument` in `rs/src/doc.rs`.
-- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards. 🚧 Added developer tooling script `rs/devtools.sh` (runs fmt & clippy) and documented expectations for CI wiring.
+- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards. 🚧 Added developer tooling script `rs/devtools.sh` (runs fmt, clippy, and `cbindgen` header checks) and documented expectations for CI wiring.
 
 ## Progress Log
 - Introduced `XmlDocument` RAII wrapper to manage `xmlDoc` allocations safely across the FFI boundary.
 - Added initial parser API audit enumerating the functions still pending Rust implementations.
-- Created a reusable script for running `cargo fmt` and `cargo clippy`, laying groundwork for CI integration.
+- Created a reusable script for running `cargo fmt`, `cargo clippy`, and verifying generated headers, laying groundwork for CI integration.
+- Stubbed the parser context lifecycle (`xmlCreateMemoryParserCtxt`, `xmlParseDocument`, `xmlFreeParserCtxt`) so Rust can own
+  shell documents while preserving the existing FFI contracts.
 
 ## Tooling Notes
-- The helper script `rs/devtools.sh` runs formatting and lint checks; wire this into Meson/CMake and future CI jobs to gate Rust
-  changes.
+- The helper script `rs/devtools.sh` runs formatting, lint, and header-generation checks; wire this into Meson/CMake and future
+  CI jobs to gate Rust changes.
 - Capture the script's output artifacts in CI logs so regressions are visible to C contributors unfamiliar with Rust tooling.

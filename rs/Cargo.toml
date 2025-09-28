@@ -8,3 +8,4 @@ crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 libc = "*"
+once_cell = "1.20"

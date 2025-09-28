@@ -113,25 +113,72 @@ typedef struct ExtxmlParserCtxt {
   struct ExtxmlDoc *doc;
   int wellFormed;
   int options;
+  const char *input;
+  int input_size;
+  const char *base_url;
+  const char *encoding;
 } ExtxmlParserCtxt;
+
+/**
+ * Allocate a new document populated with the provided XML version.
+ *
+ * # Safety
+ * `version` must be either null or a pointer to a valid null-terminated
+ * string.
+ */
+struct ExtxmlDoc *xmlNewDoc(const uint8_t *version);
+
+/**
+ * Frees the memory allocated for an xmlDoc.
+ *
+ * # Safety
+ * The caller must ensure that `doc` either originated from one of the Rust
+ * constructors and that it is not freed multiple times.
+ */
+void xmlFreeDoc(struct ExtxmlDoc *doc);
 
 /**
  * A placeholder implementation of xmlReadMemory.
  *
  * This function is one of the main entry points for parsing an XML document
- * from a buffer in memory. For now, it creates and returns a dummy document
- * to allow us to test the FFI linkage.
+ * from a buffer in memory. The Rust port currently performs minimal
+ * validation, creating a document shell that records the caller supplied
+ * metadata.
+ *
+ * # Safety
+ * The caller must supply valid pointers for the input buffer and optional
+ * strings (which may be null) following libxml2's C API contracts. The
+ * returned pointer must be released with `xmlFreeDoc`.
  */
-struct ExtxmlDoc *xmlReadMemory(const char *_buffer,
-                                int _size,
-                                const char *_url,
-                                const char *_encoding,
+struct ExtxmlDoc *xmlReadMemory(const char *buffer,
+                                int size,
+                                const char *url,
+                                const char *encoding,
                                 int options);
 
 /**
- * Frees the memory allocated for an xmlDoc.
+ * Create a parser context for parsing from an in-memory buffer.
  *
- * This function is essential for preventing memory leaks when the C test code
- * cleans up the documents created by `xmlReadMemory`.
+ * # Safety
+ * `buffer` must either be null (when `size` is zero) or point to at least
+ * `size` bytes of readable memory. The returned context must eventually be
+ * released with `xmlFreeParserCtxt`.
  */
-void xmlFreeDoc(struct ExtxmlDoc *doc);
+struct ExtxmlParserCtxt *xmlCreateMemoryParserCtxt(const char *buffer, int size);
+
+/**
+ * Parse a document using the supplied parser context, synthesising a shell
+ * document for downstream consumers.
+ *
+ * # Safety
+ * `ctxt` must be a valid pointer obtained from `xmlCreateMemoryParserCtxt`.
+ */
+int xmlParseDocument(struct ExtxmlParserCtxt *ctxt);
+
+/**
+ * Release the resources held by a parser context.
+ *
+ * # Safety
+ * `ctxt` must be null or a pointer obtained from `xmlCreateMemoryParserCtxt`.
+ */
+void xmlFreeParserCtxt(struct ExtxmlParserCtxt *ctxt);

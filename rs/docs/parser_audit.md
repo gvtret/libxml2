@@ -6,6 +6,7 @@ progress through Phase 1 of the porting plan.
 ## Summary
 - :white_check_mark: `xmlReadMemory` is stubbed out in Rust to exercise the FFI surface.
 - :white_check_mark: `xmlFreeDoc` frees the dummy document allocation through the new RAII wrapper.
+- :white_check_mark: Parser context lifecycle helpers (`xmlCreateMemoryParserCtxt`, `xmlParseDocument`, `xmlFreeParserCtxt`) are now stubbed to retain metadata and manage document ownership in Rust.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
 ## Entry points
@@ -31,7 +32,9 @@ progress through Phase 1 of the porting plan.
 | `xmlStopParser` | ❌ Missing | Depends on parser state machine. |
 | `xmlResumeParser` | ❌ Missing | " |
 | `xmlClearParserCtxt` | ❌ Missing | Context lifecycle currently unimplemented. |
-| `xmlFreeParserCtxt` | ❌ Missing | Will drop Rust-owned context wrapper. |
+| `xmlCreateMemoryParserCtxt` | ✅ Stubbed | Records caller metadata without performing real parsing. |
+| `xmlParseDocument` | ✅ Stubbed | Synthesises a shell document and marks the context as well-formed. |
+| `xmlFreeParserCtxt` | ✅ Stubbed | Drops the Rust-owned document if present. |
 | `xmlInitParser` | ❌ Missing | Needs global init shared with dictionaries. |
 | `xmlCleanupParser` | ❌ Missing | Mirror init/cleanup in Rust. |
 | `xmlCreateDocParserCtxt` | ❌ Missing | Depends on context modelling. |
