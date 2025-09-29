@@ -937,6 +937,10 @@ impl<'a> SimpleParser<'a> {
                 parser.parse_comment()?;
             } else if parser.starts_with(b"<?") {
                 parser.parse_processing_instruction()?;
+            } else if parser.starts_with(b"<![CDATA[") {
+                parser.parse_cdata_section()?;
+            } else if parser.starts_with(b"<!DOCTYPE") {
+                parser.parse_doctype()?;
             } else if parser.starts_with(b"</") {
                 parser.parse_end_element()?;
             } else if parser.data[parser.pos] == b'<' {
@@ -1096,6 +1100,64 @@ impl<'a> SimpleParser<'a> {
             self.doc.attach_child(self.stack.last().copied(), node);
         }
         Ok(())
+    }
+
+    fn parse_cdata_section(&mut self) -> Result<(), ()> {
+        self.expect_sequence(b"<![CDATA[")?;
+        let start = self.pos;
+        while self.pos + 2 < self.data.len() && &self.data[self.pos..self.pos + 3] != b"]]>" {
+            self.pos += 1;
+        }
+        if self.pos + 2 >= self.data.len() {
+            return Err(());
+        }
+        let content = &self.data[start..self.pos];
+        self.pos += 3;
+
+        let node = self
+            .doc
+            .alloc_text_node(content, xmlElementType::CdataSectionNode);
+        unsafe {
+            self.doc.attach_child(self.stack.last().copied(), node);
+        }
+        Ok(())
+    }
+
+    fn parse_doctype(&mut self) -> Result<(), ()> {
+        self.expect_sequence(b"<!DOCTYPE")?;
+        let mut depth = 0usize;
+        let mut quote = None;
+
+        while self.pos < self.data.len() {
+            let byte = self.data[self.pos];
+            self.pos += 1;
+
+            if let Some(expected) = quote {
+                if byte == expected {
+                    quote = None;
+                }
+                continue;
+            }
+
+            match byte {
+                b'"' | b'\'' => quote = Some(byte),
+                b'[' => depth += 1,
+                b']' => {
+                    if depth == 0 {
+                        return Err(());
+                    }
+                    depth -= 1;
+                }
+                b'>' => {
+                    if depth == 0 {
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Err(())
     }
 
     fn parse_processing_instruction(&mut self) -> Result<(), ()> {
@@ -1510,5 +1572,86 @@ fn clear_push_state(ctxt: *mut xmlParserCtxt) {
 
     if let Ok(mut map) = PUSH_PARSER_STATES.lock() {
         map.remove(&(ctxt as usize));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SimpleParser;
+    use crate::doc::XmlDocument;
+    use crate::tree::{xmlElementType, xmlNode};
+    use std::ffi::CStr;
+    use std::os::raw::c_char;
+    use std::ptr;
+
+    #[test]
+    fn parses_attributes_and_decodes_entities() {
+        let xml = br#"<root answer="3 &gt; 2">Value &amp; More</root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let root = (*doc_ptr).children;
+            assert!(!root.is_null());
+            assert_eq!(node_name(root), "root");
+
+            let attr = (*root).properties;
+            assert!(!attr.is_null());
+            assert_eq!(node_name((*attr).children), "");
+            assert_eq!(node_text((*attr).children), "3 > 2");
+
+            let text = (*root).children;
+            assert!(!text.is_null());
+            assert_eq!((*text).type_, xmlElementType::TextNode);
+            assert_eq!(node_text(text), "Value & More");
+        }
+    }
+
+    #[test]
+    fn skips_doctype_and_builds_cdata_nodes() {
+        let xml = br#"<?xml version="1.0"?><!DOCTYPE note [<!ELEMENT note ANY>]><note><![CDATA[Hello <world>]]></note>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let root = (*doc_ptr).children;
+            assert_eq!(node_name(root), "note");
+
+            let child = (*root).children;
+            assert!(!child.is_null());
+            assert_eq!((*child).type_, xmlElementType::CdataSectionNode);
+            assert_eq!(node_text(child), "Hello <world>");
+        }
+    }
+
+    unsafe fn node_name(node: *mut xmlNode) -> String {
+        if node.is_null() {
+            return String::new();
+        }
+
+        let name_ptr = unsafe { (*node).name };
+        if name_ptr.is_null() {
+            return String::new();
+        }
+
+        unsafe {
+            CStr::from_ptr(name_ptr as *const c_char)
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
+    unsafe fn node_text(node: *mut xmlNode) -> String {
+        if node.is_null() || unsafe { (*node).content.is_null() } {
+            return String::new();
+        }
+
+        unsafe {
+            CStr::from_ptr((*node).content as *const c_char)
+                .to_string_lossy()
+                .into_owned()
+        }
     }
 }

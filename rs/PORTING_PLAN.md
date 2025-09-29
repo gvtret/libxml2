@@ -72,7 +72,8 @@
 ## Immediate Next Steps
 - Audit `rs/src/parser.rs` for completeness against `parser.c` entry points and log missing functions. ✅ See `rs/docs/parser_audit.md`.
 - Prototype a Rust-owned document allocator with drop semantics mirroring `xmlFreeDoc`. ✅ Implemented via `XmlDocument` in `rs/src/doc.rs`.
-- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards. � Added developer tooling script `rs/devtools.sh` (runs fmt, clippy, and `cbindgen` header checks) and documented expectations for CI wiring.
+- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards.
+- Added developer tooling script `rs/devtools.sh` (runs fmt, clippy, and `cbindgen` header checks) and documented expectations for CI wiring.
 
 ## Progress Log
 - Introduced `XmlDocument` RAII wrapper to manage `xmlDoc` allocations safely across the FFI boundary.
@@ -90,6 +91,7 @@
 - Stubbed `xmlSAXUserParseFile` and `xmlSAXUserParseMemory` to validate inputs while deferring SAX callback wiring.
 - Added push-mode shims (`xmlCreatePushParserCtxt`, `xmlParseChunk`, `xmlStopParser`) that buffer streamed input before deferring to the placeholder DOM builder.
 - Implemented `xmlResumeParser` so stopped push contexts can accept additional data before termination.
+- Taught the placeholder Rust parser to ignore `<!DOCTYPE>` declarations, build CDATA nodes, and decode entity references in attribute values so more legacy documents round-trip successfully.
 
 ## Tooling Notes
 - The helper script `rs/devtools.sh` runs formatting, lint, and header-generation checks; wire this into Meson/CMake and future

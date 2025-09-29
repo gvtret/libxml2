@@ -149,12 +149,8 @@ struct xmlDoc *xmlNewDoc(const uint8_t *version);
 void xmlFreeDoc(struct xmlDoc *doc);
 
 /**
- * A placeholder implementation of xmlReadMemory.
- *
- * This function is one of the main entry points for parsing an XML document
- * from a buffer in memory. The Rust port currently performs minimal
- * validation, creating a document shell that records the caller supplied
- * metadata.
+ * Parse an XML document stored entirely in memory and return a fully
+ * populated `xmlDoc` tree.
  *
  * # Safety
  * The caller must supply valid pointers for the input buffer and optional
@@ -457,11 +453,14 @@ void xmlClearParserCtxt(struct xmlParserCtxt *ctxt);
 struct xmlParserCtxt *xmlCreateMemoryParserCtxt(const char *buffer, int size);
 
 /**
- * Parse a document using the supplied parser context, synthesising a shell
- * document for downstream consumers.
+ * Parse the buffer registered on the supplied context and produce a document
+ * tree when the input is well-formed.
  *
  * # Safety
- * `ctxt` must be a valid pointer obtained from `xmlCreateMemoryParserCtxt`.
+ * `ctxt` must be a valid pointer obtained from the parser-context
+ * constructors. The context's `input` and `input_size` fields must describe a
+ * readable memory region that remains accessible for the duration of this
+ * call.
  */
 int xmlParseDocument(struct xmlParserCtxt *ctxt);
 

@@ -16,6 +16,7 @@ progress through Phase 1 of the porting plan.
 - :white_check_mark: `xmlCtxtReadMemory`, `xmlCtxtReadDoc`, and `xmlCtxtReadFile` reuse the placeholder parser with an existing context.
 - :white_check_mark: `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` reuse the read helpers with recovery parsing enabled.
 - :white_check_mark: Push-mode helpers (`xmlCreatePushParserCtxt`, `xmlParseChunk`, `xmlStopParser`, `xmlResumeParser`) accumulate streamed input and defer to the placeholder DOM parser on termination.
+- :white_check_mark: The placeholder DOM builder now skips `<!DOCTYPE ...>` declarations, constructs CDATA section nodes, and decodes entity references in attribute values.
 - :x: All other parser-facing functions still call into the legacy C implementation and need Rust shims.
 
 ## Entry points
