@@ -72,7 +72,7 @@
 ## Immediate Next Steps
 - Audit `rs/src/parser.rs` for completeness against `parser.c` entry points and log missing functions. ✅ See `rs/docs/parser_audit.md`.
 - Prototype a Rust-owned document allocator with drop semantics mirroring `xmlFreeDoc`. ✅ Implemented via `XmlDocument` in `rs/src/doc.rs`.
-- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards. 🚧 Added developer tooling script `rs/devtools.sh` (runs fmt, clippy, and `cbindgen` header checks) and documented expectations for CI wiring.
+- Set up `cargo fmt`, `cargo clippy`, and CI integration to keep Rust code quality aligned with libxml2 standards. � Added developer tooling script `rs/devtools.sh` (runs fmt, clippy, and `cbindgen` header checks) and documented expectations for CI wiring.
 
 ## Progress Log
 - Introduced `XmlDocument` RAII wrapper to manage `xmlDoc` allocations safely across the FFI boundary.
@@ -82,6 +82,14 @@
  shell documents while preserving the existing FFI contracts.
 - Extended the in-memory parsing surface by stubbing `xmlReadDoc`, `xmlParseDoc`, and `xmlParseMemory` on top of the Rust `xmlReadMemory` implementation.
 - Routed `xmlReadFile` and `xmlParseFile` through the Rust stubs so filesystem-based entry points behave consistently with the in-memory helpers.
+- Added `xmlReadFd`/`xmlCtxtReadFd` stubs that stream descriptor contents through the existing memory-backed placeholder parser while keeping descriptors open for the caller.
+- Stubbed the context-based helpers (`xmlCtxtReadMemory`, `xmlCtxtReadDoc`, `xmlCtxtReadFile`) to drive the placeholder parser via existing contexts.
+- Filled out the parser context lifecycle by stubbing `xmlNewParserCtxt`, `xmlInitParserCtxt`, `xmlClearParserCtxt`, `xmlCreateDocParserCtxt`, `xmlInitParser`, and `xmlCleanupParser` so callers can exercise the Rust scaffolding via the familiar C entry points.
+- Added `xmlReadIO`/`xmlCtxtReadIO` shims that buffer callback-driven input before delegating to the placeholder parser, covering the remaining non-streaming read entry points.
+- Stubbed `xmlRecoverMemory`, `xmlRecoverDoc`, and `xmlRecoverFile` to honour recovery-mode parsing via the Rust read helpers.
+- Stubbed `xmlSAXUserParseFile` and `xmlSAXUserParseMemory` to validate inputs while deferring SAX callback wiring.
+- Added push-mode shims (`xmlCreatePushParserCtxt`, `xmlParseChunk`, `xmlStopParser`) that buffer streamed input before deferring to the placeholder DOM builder.
+- Implemented `xmlResumeParser` so stopped push contexts can accept additional data before termination.
 
 ## Tooling Notes
 - The helper script `rs/devtools.sh` runs formatting, lint, and header-generation checks; wire this into Meson/CMake and future

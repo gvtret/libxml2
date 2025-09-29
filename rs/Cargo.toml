@@ -1,9 +1,10 @@
 [package]
-name = "libxml2-rs"
+name = "libxml2"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
+name = "xml2"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
