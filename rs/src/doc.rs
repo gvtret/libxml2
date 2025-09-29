@@ -1,4 +1,4 @@
-use crate::tree::{xmlAttr, xmlAttributeType, xmlDoc, xmlElementType, xmlNode};
+use crate::tree::{xmlAttr, xmlAttributeType, xmlDoc, xmlElementType, xmlNode, xmlNs};
 use libc::{c_char, c_int};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -7,6 +7,8 @@ use std::sync::Mutex;
 
 const DEFAULT_VERSION: &[u8] = b"1.0\0";
 const DEFAULT_ENCODING: &[u8] = b"UTF-8\0";
+const XML_NAMESPACE_PREFIX: &[u8] = b"xml";
+const XML_NAMESPACE_URI: &[u8] = b"http://www.w3.org/XML/1998/namespace";
 
 #[allow(clippy::vec_box)]
 #[derive(Default)]
@@ -17,7 +19,11 @@ struct XmlDocExtras {
     node_storage: Vec<Box<xmlNode>>,
     attr_storage: Vec<Box<xmlAttr>>,
     string_storage: Vec<Box<[u8]>>,
+    ns_storage: Vec<Box<xmlNs>>,
+    xml_namespace: Option<NonNull<xmlNs>>,
 }
+
+unsafe impl Send for XmlDocExtras {}
 
 impl XmlDocExtras {
     fn version_ptr(&self) -> *const u8 {
@@ -66,10 +72,38 @@ impl XmlDocExtras {
         ptr
     }
 
+    fn alloc_ns(&mut self, ns: xmlNs) -> *mut xmlNs {
+        let mut boxed = Box::new(ns);
+        let ptr = boxed.as_mut() as *mut xmlNs;
+        self.ns_storage.push(boxed);
+        ptr
+    }
+
     fn clear_tree_storage(&mut self) {
         self.node_storage.clear();
         self.attr_storage.clear();
         self.string_storage.clear();
+        self.ns_storage.clear();
+        self.xml_namespace = None;
+    }
+
+    fn ensure_xml_namespace(&mut self, doc_ptr: *mut xmlDoc) -> *mut xmlNs {
+        if let Some(ns) = self.xml_namespace {
+            return ns.as_ptr();
+        }
+
+        let href_ptr = self.alloc_const_string(XML_NAMESPACE_URI);
+        let prefix_ptr = self.alloc_const_string(XML_NAMESPACE_PREFIX);
+        let ns_ptr = self.alloc_ns(xmlNs {
+            next: ptr::null_mut(),
+            type_: xmlElementType::NamespaceDecl,
+            href: href_ptr,
+            prefix: prefix_ptr,
+            _private: ptr::null_mut(),
+            context: doc_ptr,
+        });
+        self.xml_namespace = NonNull::new(ns_ptr);
+        ns_ptr
     }
 
     fn set_version(&mut self, version: &[u8]) -> *const u8 {
@@ -295,6 +329,33 @@ impl XmlDocument {
         })
     }
 
+    pub fn alloc_namespace(&mut self, href: Option<&[u8]>, prefix: Option<&[u8]>) -> *mut xmlNs {
+        let doc_ptr = self.inner.as_ptr();
+        let extras = self.extras_mut();
+        let href_ptr = match href {
+            Some(value) if !value.is_empty() => extras.alloc_const_string(value),
+            Some(_) | None => ptr::null(),
+        };
+        let prefix_ptr = prefix
+            .filter(|value| !value.is_empty())
+            .map(|value| extras.alloc_const_string(value))
+            .unwrap_or(ptr::null());
+        extras.alloc_ns(xmlNs {
+            next: ptr::null_mut(),
+            type_: xmlElementType::NamespaceDecl,
+            href: href_ptr,
+            prefix: prefix_ptr,
+            _private: ptr::null_mut(),
+            context: doc_ptr,
+        })
+    }
+
+    pub fn ensure_xml_namespace(&mut self) -> *mut xmlNs {
+        let doc_ptr = self.inner.as_ptr();
+        let extras = self.extras_mut();
+        extras.ensure_xml_namespace(doc_ptr)
+    }
+
     /// # Safety
     /// `parent` and `child` must either be null or pointers produced by the
     /// Rust allocation helpers in this module. The pointers must remain valid
@@ -365,6 +426,43 @@ impl XmlDocument {
                 (*current).next = attr;
                 (*attr).prev = current;
             }
+        }
+    }
+
+    /// # Safety
+    /// `element` and `ns` must be null or pointers allocated through this
+    /// module. The namespace list on the element is extended without
+    /// additional validation.
+    pub unsafe fn append_namespace(&mut self, element: *mut xmlNode, ns: *mut xmlNs) {
+        if element.is_null() || ns.is_null() {
+            return;
+        }
+
+        unsafe {
+            (*ns).next = ptr::null_mut();
+
+            if (*element).nsDef.is_null() {
+                (*element).nsDef = ns;
+            } else {
+                let mut current = (*element).nsDef;
+                while !(*current).next.is_null() {
+                    current = (*current).next;
+                }
+                (*current).next = ns;
+            }
+        }
+    }
+
+    /// # Safety
+    /// `element` must be null or a pointer allocated through this module.
+    /// When `ns` is `None` the element namespace is cleared.
+    pub unsafe fn set_node_namespace(&mut self, element: *mut xmlNode, ns: Option<*mut xmlNs>) {
+        if element.is_null() {
+            return;
+        }
+
+        unsafe {
+            (*element).ns = ns.unwrap_or(ptr::null_mut());
         }
     }
 }
