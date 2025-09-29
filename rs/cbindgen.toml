@@ -2,7 +2,7 @@ language = "C"
 
 [parse]
 parse_deps = true
-include = ["libxml2-rs"]
+include = ["libxml2"]
 clean = false
 
 [export]
@@ -15,4 +15,3 @@ include = [
     "xmlNs",
     "xmlAttr",
 ]
-prefix = "Ext"
