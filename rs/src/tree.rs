@@ -128,3 +128,4 @@ pub struct xmlAttr {
 
 unsafe impl Send for xmlNode {}
 unsafe impl Send for xmlAttr {}
+unsafe impl Send for xmlNs {}

@@ -1,5 +1,5 @@
 use crate::doc::{XmlDocument, xmlFreeDoc};
-use crate::tree::{xmlDoc, xmlElementType, xmlNode};
+use crate::tree::{xmlDoc, xmlElementType, xmlNode, xmlNs};
 use libc::{c_char, c_int, c_void};
 use once_cell::sync::Lazy;
 use std::char;
@@ -906,8 +906,41 @@ struct SimpleParser<'a> {
     data: &'a [u8],
     pos: usize,
     doc: &'a mut XmlDocument,
-    stack: Vec<*mut xmlNode>,
+    stack: Vec<ElementFrame>,
     root_count: usize,
+}
+
+#[derive(Clone, Copy)]
+enum NamespaceTarget {
+    Bound(*mut xmlNs),
+    Unbound,
+}
+
+#[derive(Clone, Copy)]
+enum NamespaceResolution {
+    Bound(*mut xmlNs),
+    Unbound,
+    NotFound,
+}
+
+impl From<NamespaceTarget> for NamespaceResolution {
+    fn from(target: NamespaceTarget) -> Self {
+        match target {
+            NamespaceTarget::Bound(ptr) => NamespaceResolution::Bound(ptr),
+            NamespaceTarget::Unbound => NamespaceResolution::Unbound,
+        }
+    }
+}
+
+type NamespaceBinding = (Option<Vec<u8>>, NamespaceTarget);
+type NamespaceBindings = Vec<NamespaceBinding>;
+type NamespaceBindingSlice<'a> = &'a [NamespaceBinding];
+
+struct ElementFrame {
+    node: *mut xmlNode,
+    local_name: Vec<u8>,
+    prefix: Option<Vec<u8>>,
+    namespaces: NamespaceBindings,
 }
 
 type AttributeRecord = (Vec<u8>, Vec<u8>);
@@ -1022,10 +1055,51 @@ impl<'a> SimpleParser<'a> {
             false
         };
 
-        let node = self.doc.alloc_element(&name);
-        self.attach_attributes(node, attrs)?;
+        let (prefix_slice, local_slice) = split_qname(name.as_slice())?;
+        let local_name = local_slice.to_vec();
+        let prefix_vec = prefix_slice.map(|bytes| bytes.to_vec());
 
-        let parent = self.stack.last().copied();
+        let node = self.doc.alloc_element(&local_name);
+
+        let mut namespace_bindings: NamespaceBindings = Vec::new();
+        let mut regular_attrs = Vec::new();
+
+        for (attr_name, value) in attrs {
+            if attr_name.as_slice() == b"xmlns" {
+                let (ns_ptr, target) = if value.is_empty() {
+                    let ns_ptr = self.doc.alloc_namespace(None, None);
+                    (ns_ptr, NamespaceTarget::Unbound)
+                } else {
+                    let ns_ptr = self.doc.alloc_namespace(Some(value.as_slice()), None);
+                    (ns_ptr, NamespaceTarget::Bound(ns_ptr))
+                };
+                unsafe {
+                    self.doc.append_namespace(node, ns_ptr);
+                }
+                namespace_bindings.push((None, target));
+            } else if attr_name.starts_with(b"xmlns:") {
+                if attr_name.len() <= 6 {
+                    return Err(());
+                }
+                let prefix = attr_name[6..].to_vec();
+                if prefix.is_empty() {
+                    return Err(());
+                }
+                let ns_ptr = self
+                    .doc
+                    .alloc_namespace(Some(value.as_slice()), Some(prefix.as_slice()));
+                unsafe {
+                    self.doc.append_namespace(node, ns_ptr);
+                }
+                namespace_bindings.push((Some(prefix), NamespaceTarget::Bound(ns_ptr)));
+            } else {
+                regular_attrs.push((attr_name, value));
+            }
+        }
+
+        self.attach_attributes(node, regular_attrs, &namespace_bindings)?;
+
+        let parent = self.current_parent();
         if parent.is_none() {
             self.root_count += 1;
             if self.root_count > 1 {
@@ -1036,8 +1110,30 @@ impl<'a> SimpleParser<'a> {
             self.doc.attach_child(parent, node);
         }
 
+        let frame = ElementFrame {
+            node,
+            local_name,
+            prefix: prefix_vec,
+            namespaces: namespace_bindings,
+        };
+
+        let resolution =
+            self.resolve_namespace(frame.prefix.as_deref(), Some(frame.namespaces.as_slice()));
+        match (frame.prefix.as_deref(), resolution) {
+            (_, NamespaceResolution::Bound(ns_ptr)) => unsafe {
+                self.doc.set_node_namespace(node, Some(ns_ptr));
+            },
+            (None, NamespaceResolution::Unbound) => unsafe {
+                self.doc.set_node_namespace(node, None);
+            },
+            (Some(_), NamespaceResolution::Unbound) | (Some(_), NamespaceResolution::NotFound) => {
+                return Err(());
+            }
+            (None, NamespaceResolution::NotFound) => {}
+        }
+
         if !empty {
-            self.stack.push(node);
+            self.stack.push(frame);
         }
 
         Ok(())
@@ -1049,9 +1145,9 @@ impl<'a> SimpleParser<'a> {
         self.skip_whitespace();
         self.expect_char(b'>')?;
 
-        let node = self.stack.pop().ok_or(())?;
-        let node_name = node_name_bytes(node);
-        if node_name != name {
+        let (prefix_slice, local_slice) = split_qname(name.as_slice())?;
+        let frame = self.stack.pop().ok_or(())?;
+        if !frame.matches(prefix_slice, local_slice) {
             return Err(());
         }
 
@@ -1076,7 +1172,7 @@ impl<'a> SimpleParser<'a> {
 
         let node = self.doc.alloc_text_node(&decoded, xmlElementType::TextNode);
         unsafe {
-            self.doc.attach_child(self.stack.last().copied(), node);
+            self.doc.attach_child(self.current_parent(), node);
         }
         Ok(())
     }
@@ -1097,7 +1193,7 @@ impl<'a> SimpleParser<'a> {
             .doc
             .alloc_text_node(comment, xmlElementType::CommentNode);
         unsafe {
-            self.doc.attach_child(self.stack.last().copied(), node);
+            self.doc.attach_child(self.current_parent(), node);
         }
         Ok(())
     }
@@ -1118,7 +1214,7 @@ impl<'a> SimpleParser<'a> {
             .doc
             .alloc_text_node(content, xmlElementType::CdataSectionNode);
         unsafe {
-            self.doc.attach_child(self.stack.last().copied(), node);
+            self.doc.attach_child(self.current_parent(), node);
         }
         Ok(())
     }
@@ -1162,13 +1258,25 @@ impl<'a> SimpleParser<'a> {
 
     fn parse_processing_instruction(&mut self) -> Result<(), ()> {
         self.expect_sequence(b"<?")?;
+        let target = self.parse_name()?;
+        self.skip_whitespace();
+        let start = self.pos;
         while self.pos + 1 < self.data.len() && &self.data[self.pos..self.pos + 2] != b"?>" {
             self.pos += 1;
         }
         if self.pos + 1 >= self.data.len() {
             return Err(());
         }
+        let content = &self.data[start..self.pos];
         self.pos += 2;
+
+        let node = self
+            .doc
+            .alloc_processing_instruction(target.as_slice(), content);
+        unsafe {
+            self.doc.attach_child(self.current_parent(), node);
+        }
+
         Ok(())
     }
 
@@ -1215,9 +1323,23 @@ impl<'a> SimpleParser<'a> {
         &mut self,
         element: *mut xmlNode,
         attrs: Vec<AttributeRecord>,
+        pending_ns: &NamespaceBindings,
     ) -> Result<(), ()> {
         for (name, value) in attrs {
-            let attr = self.doc.alloc_attribute(&name);
+            let (prefix_opt, local_name) = split_qname(name.as_slice())?;
+            let attr = self.doc.alloc_attribute(local_name);
+
+            if let Some(prefix) = prefix_opt {
+                match self.resolve_namespace(Some(prefix), Some(pending_ns.as_slice())) {
+                    NamespaceResolution::Bound(ns_ptr) => unsafe {
+                        (*attr).ns = ns_ptr;
+                    },
+                    NamespaceResolution::Unbound | NamespaceResolution::NotFound => {
+                        return Err(());
+                    }
+                }
+            }
+
             if !value.is_empty() {
                 let child = self.doc.alloc_text_node(&value, xmlElementType::TextNode);
                 unsafe {
@@ -1281,6 +1403,44 @@ impl<'a> SimpleParser<'a> {
     fn next_byte(&self) -> Result<u8, ()> {
         self.data.get(self.pos).copied().ok_or(())
     }
+
+    fn current_parent(&self) -> Option<*mut xmlNode> {
+        self.stack.last().map(|frame| frame.node)
+    }
+
+    fn resolve_namespace(
+        &mut self,
+        prefix: Option<&[u8]>,
+        pending: Option<NamespaceBindingSlice<'_>>,
+    ) -> NamespaceResolution {
+        if let Some(scope) = pending
+            && let Some(target) = find_in_bindings(scope, prefix)
+        {
+            return target.into();
+        }
+
+        for frame in self.stack.iter().rev() {
+            if let Some(target) = frame.find_namespace(prefix) {
+                return target.into();
+            }
+        }
+
+        if prefix.is_some_and(|candidate| candidate == b"xml") {
+            return NamespaceResolution::Bound(self.doc.ensure_xml_namespace());
+        }
+
+        NamespaceResolution::NotFound
+    }
+}
+
+impl ElementFrame {
+    fn matches(&self, prefix: Option<&[u8]>, local: &[u8]) -> bool {
+        self.local_name.as_slice() == local && prefixes_match(self.prefix.as_deref(), prefix)
+    }
+
+    fn find_namespace(&self, prefix: Option<&[u8]>) -> Option<NamespaceTarget> {
+        find_in_bindings(self.namespaces.as_slice(), prefix)
+    }
 }
 
 fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
@@ -1288,6 +1448,22 @@ fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
         &bytes[3..]
     } else {
         bytes
+    }
+}
+
+fn split_qname(name: &[u8]) -> Result<(Option<&[u8]>, &[u8]), ()> {
+    if let Some(index) = name.iter().position(|&b| b == b':') {
+        if index == 0 || index + 1 >= name.len() {
+            return Err(());
+        }
+        let prefix = &name[..index];
+        let local = &name[index + 1..];
+        if local.is_empty() {
+            return Err(());
+        }
+        Ok((Some(prefix), local))
+    } else {
+        Ok((None, name))
     }
 }
 
@@ -1340,6 +1516,26 @@ fn decode_entities(data: &[u8]) -> Result<Vec<u8>, ()> {
     Ok(out)
 }
 
+fn find_in_bindings(
+    bindings: NamespaceBindingSlice<'_>,
+    prefix: Option<&[u8]>,
+) -> Option<NamespaceTarget> {
+    for (stored_prefix, target) in bindings.iter().rev() {
+        if prefixes_match(stored_prefix.as_deref(), prefix) {
+            return Some(*target);
+        }
+    }
+    None
+}
+
+fn prefixes_match(left: Option<&[u8]>, right: Option<&[u8]>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(lhs), Some(rhs)) => lhs == rhs,
+        _ => false,
+    }
+}
+
 fn push_codepoint(out: &mut Vec<u8>, codepoint: u32) -> Result<(), ()> {
     if let Some(ch) = char::from_u32(codepoint) {
         let mut buf = [0u8; 4];
@@ -1361,22 +1557,6 @@ fn is_name_start(byte: u8) -> bool {
 
 fn is_name_char(byte: u8) -> bool {
     is_name_start(byte) || matches!(byte, b'0'..=b'9' | b'-' | b'.')
-}
-
-fn node_name_bytes(node: *mut xmlNode) -> Vec<u8> {
-    if node.is_null() {
-        return Vec::new();
-    }
-
-    unsafe {
-        if (*node).name.is_null() {
-            Vec::new()
-        } else {
-            CStr::from_ptr((*node).name as *const c_char)
-                .to_bytes()
-                .to_vec()
-        }
-    }
 }
 
 unsafe fn read_file_buffer(filename: *const c_char) -> Option<Vec<u8>> {
@@ -1623,6 +1803,196 @@ mod tests {
             assert!(!child.is_null());
             assert_eq!((*child).type_, xmlElementType::CdataSectionNode);
             assert_eq!(node_text(child), "Hello <world>");
+        }
+    }
+
+    #[test]
+    fn builds_processing_instruction_nodes() {
+        let xml = br#"<?xml version="1.0"?><?process data?><root><?inner more ?><child/><?empty?></root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let first = (*doc_ptr).children;
+            assert!(!first.is_null());
+            assert_eq!((*first).type_, xmlElementType::PiNode);
+            assert_eq!(node_name(first), "process");
+            assert_eq!(node_text(first), "data");
+
+            let root = (*first).next;
+            assert!(!root.is_null());
+            assert_eq!(node_name(root), "root");
+
+            let inner = (*root).children;
+            assert!(!inner.is_null());
+            assert_eq!((*inner).type_, xmlElementType::PiNode);
+            assert_eq!(node_name(inner), "inner");
+            assert_eq!(node_text(inner), "more ");
+
+            let child = (*inner).next;
+            assert!(!child.is_null());
+            assert_eq!(node_name(child), "child");
+
+            let trailing = (*child).next;
+            assert!(!trailing.is_null());
+            assert_eq!((*trailing).type_, xmlElementType::PiNode);
+            assert_eq!(node_name(trailing), "empty");
+            assert_eq!(node_text(trailing), "");
+        }
+    }
+
+    #[test]
+    fn propagates_default_namespace_to_descendants() {
+        let xml = br#"<root xmlns="http://example.com/ns"><child /></root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let root = (*doc_ptr).children;
+            assert_eq!(node_name(root), "root");
+            let ns = (*root).ns;
+            assert!(!ns.is_null());
+
+            let href = CStr::from_ptr((*ns).href as *const c_char)
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(href, "http://example.com/ns");
+            assert!((*ns).prefix.is_null());
+            assert_eq!((*root).nsDef, ns);
+
+            let child = (*root).children;
+            assert!(!child.is_null());
+            assert_eq!(node_name(child), "child");
+            assert_eq!((*child).ns, ns);
+        }
+    }
+
+    #[test]
+    fn resolves_prefixed_namespaces_on_elements_and_attributes() {
+        let xml =
+            br#"<ns:root xmlns:ns="http://example.com/ns" ns:answer="42"><ns:child /></ns:root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let root = (*doc_ptr).children;
+            assert_eq!(node_name(root), "root");
+            let ns = (*root).ns;
+            assert!(!ns.is_null());
+
+            let href = CStr::from_ptr((*ns).href as *const c_char)
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(href, "http://example.com/ns");
+
+            let prefix = CStr::from_ptr((*ns).prefix as *const c_char)
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(prefix, "ns");
+
+            let attr = (*root).properties;
+            assert!(!attr.is_null());
+            assert_eq!(node_name((*attr).children), "");
+            assert_eq!(node_text((*attr).children), "42");
+            assert_eq!((*attr).ns, ns);
+
+            let child = (*root).children;
+            assert!(!child.is_null());
+            assert_eq!((*child).ns, ns);
+        }
+    }
+
+    #[test]
+    fn assigns_builtin_xml_namespace_to_prefixed_nodes() {
+        let xml = br#"<root xml:lang="en"><child xml:space="preserve"/></root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let root = (*doc_ptr).children;
+            assert_eq!(node_name(root), "root");
+
+            let attr = (*root).properties;
+            assert!(!attr.is_null());
+            let ns = (*attr).ns;
+            assert!(!ns.is_null());
+
+            let href = CStr::from_ptr((*ns).href as *const c_char)
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(href, "http://www.w3.org/XML/1998/namespace");
+
+            let prefix = CStr::from_ptr((*ns).prefix as *const c_char)
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(prefix, "xml");
+
+            let child = (*root).children;
+            assert!(!child.is_null());
+            assert_eq!(node_name(child), "child");
+
+            let child_attr = (*child).properties;
+            assert!(!child_attr.is_null());
+            assert_eq!((*child_attr).ns, ns);
+        }
+    }
+
+    #[test]
+    fn clears_default_namespace_for_empty_binding() {
+        let xml = br#"<root xmlns="http://example.com/ns"><child xmlns=""/><leaf/></root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let root = (*doc_ptr).children;
+            assert_eq!(node_name(root), "root");
+
+            let root_ns = (*root).ns;
+            assert!(!root_ns.is_null());
+
+            let child = (*root).children;
+            assert!(!child.is_null());
+            assert_eq!(node_name(child), "child");
+            assert!((*child).ns.is_null());
+
+            let sibling = (*child).next;
+            assert!(!sibling.is_null());
+            assert_eq!(node_name(sibling), "leaf");
+            assert_eq!((*sibling).ns, root_ns);
+        }
+    }
+
+    #[test]
+    fn restores_parent_default_namespace_after_unbinding_scope() {
+        let xml = br#"<root xmlns="urn:parent"><mid xmlns=""><leaf/></mid><tail/></root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let root = (*doc_ptr).children;
+            let root_ns = (*root).ns;
+            assert!(!root_ns.is_null());
+
+            let mid = (*root).children;
+            assert!(!mid.is_null());
+            assert_eq!(node_name(mid), "mid");
+            assert!((*mid).ns.is_null());
+
+            let mid_leaf = (*mid).children;
+            assert!(!mid_leaf.is_null());
+            assert_eq!(node_name(mid_leaf), "leaf");
+            assert!((*mid_leaf).ns.is_null());
+
+            let tail = (*mid).next;
+            assert!(!tail.is_null());
+            assert_eq!(node_name(tail), "tail");
+            assert_eq!((*tail).ns, root_ns);
         }
     }
 
