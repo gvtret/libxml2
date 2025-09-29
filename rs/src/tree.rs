@@ -125,3 +125,6 @@ pub struct xmlAttr {
     pub atype: xmlAttributeType,
     pub psvi: *mut c_void,
 }
+
+unsafe impl Send for xmlNode {}
+unsafe impl Send for xmlAttr {}

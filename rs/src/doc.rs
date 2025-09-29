@@ -1,4 +1,4 @@
-use crate::tree::{xmlDoc, xmlElementType};
+use crate::tree::{xmlAttr, xmlAttributeType, xmlDoc, xmlElementType, xmlNode};
 use libc::{c_char, c_int};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -8,11 +8,15 @@ use std::sync::Mutex;
 const DEFAULT_VERSION: &[u8] = b"1.0\0";
 const DEFAULT_ENCODING: &[u8] = b"UTF-8\0";
 
+#[allow(clippy::vec_box)]
 #[derive(Default)]
 struct XmlDocExtras {
     version: Option<Box<[u8]>>,
     encoding: Option<Box<[u8]>>,
     url: Option<Box<[u8]>>,
+    node_storage: Vec<Box<xmlNode>>,
+    attr_storage: Vec<Box<xmlAttr>>,
+    string_storage: Vec<Box<[u8]>>,
 }
 
 impl XmlDocExtras {
@@ -32,6 +36,50 @@ impl XmlDocExtras {
         self.url
             .as_deref()
             .map_or(ptr::null(), |bytes| bytes.as_ptr())
+    }
+
+    fn alloc_string(&mut self, data: &[u8]) -> *mut u8 {
+        let mut owned = Vec::with_capacity(data.len() + 1);
+        owned.extend_from_slice(data);
+        owned.push(0);
+        let boxed = owned.into_boxed_slice();
+        let ptr = boxed.as_ptr() as *mut u8;
+        self.string_storage.push(boxed);
+        ptr
+    }
+
+    fn alloc_const_string(&mut self, data: &[u8]) -> *const u8 {
+        self.alloc_string(data) as *const u8
+    }
+
+    fn alloc_node(&mut self, node: xmlNode) -> *mut xmlNode {
+        let mut boxed = Box::new(node);
+        let ptr = boxed.as_mut() as *mut xmlNode;
+        self.node_storage.push(boxed);
+        ptr
+    }
+
+    fn alloc_attr(&mut self, attr: xmlAttr) -> *mut xmlAttr {
+        let mut boxed = Box::new(attr);
+        let ptr = boxed.as_mut() as *mut xmlAttr;
+        self.attr_storage.push(boxed);
+        ptr
+    }
+
+    fn clear_tree_storage(&mut self) {
+        self.node_storage.clear();
+        self.attr_storage.clear();
+        self.string_storage.clear();
+    }
+
+    fn set_version(&mut self, version: &[u8]) -> *const u8 {
+        self.version = Some(to_c_string(version));
+        self.version_ptr()
+    }
+
+    fn set_encoding(&mut self, encoding: &[u8]) -> *const u8 {
+        self.encoding = Some(to_c_string(encoding));
+        self.encoding_ptr()
     }
 }
 
@@ -58,9 +106,9 @@ impl XmlDocument {
     /// call.
     pub unsafe fn new(options: c_int, url: *const c_char, encoding: *const c_char) -> Self {
         let extras = XmlDocExtras {
-            version: None,
             encoding: unsafe { duplicate_null_terminated(encoding as *const u8) },
             url: unsafe { duplicate_null_terminated(url as *const u8) },
+            ..Default::default()
         };
         Self::from_extras(options, extras)
     }
@@ -79,8 +127,6 @@ impl XmlDocument {
     }
 
     fn from_extras(options: c_int, extras: XmlDocExtras) -> Self {
-        // Allocate the structure with the same default values that the legacy
-        // C implementation relies on when creating an empty document.
         let doc = Box::new(xmlDoc {
             _private: ptr::null_mut(),
             type_: xmlElementType::DocumentNode,
@@ -108,9 +154,6 @@ impl XmlDocument {
             properties: 0,
         });
 
-        // Convert the Box into a raw pointer so that the document can be
-        // shared across the FFI boundary. The `doc` self-pointer is populated
-        // afterwards to mirror libxml2's invariants.
         let mut inner = NonNull::new(Box::into_raw(doc)).expect("xmlDoc allocation");
         unsafe {
             inner.as_mut().doc = inner.as_ptr();
@@ -124,6 +167,10 @@ impl XmlDocument {
 
     /// Borrow the underlying pointer for FFI exposure.
     pub fn as_ptr(&self) -> *mut xmlDoc {
+        self.inner.as_ptr()
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut xmlDoc {
         self.inner.as_ptr()
     }
 
@@ -149,6 +196,176 @@ impl XmlDocument {
         let inner = NonNull::new(doc)?;
         let extras = take_extras(doc);
         Some(XmlDocument { inner, extras })
+    }
+
+    fn extras_mut(&mut self) -> &mut XmlDocExtras {
+        self.extras
+            .as_deref_mut()
+            .expect("XmlDocument extras must be present")
+    }
+
+    pub fn clear_tree(&mut self) {
+        let doc_ptr = self.as_mut_ptr();
+        unsafe {
+            (*doc_ptr).children = ptr::null_mut();
+            (*doc_ptr).last = ptr::null_mut();
+        }
+        self.extras_mut().clear_tree_storage();
+    }
+
+    pub fn set_version_bytes(&mut self, version: &[u8]) {
+        let ptr = self.extras_mut().set_version(version);
+        unsafe {
+            (*self.inner.as_ptr()).version = ptr;
+        }
+    }
+
+    pub fn set_encoding_bytes(&mut self, encoding: &[u8]) {
+        let ptr = self.extras_mut().set_encoding(encoding);
+        unsafe {
+            (*self.inner.as_ptr()).encoding = ptr;
+        }
+    }
+
+    pub fn alloc_element(&mut self, name: &[u8]) -> *mut xmlNode {
+        let doc_ptr = self.inner.as_ptr();
+        let extras = self.extras_mut();
+        let name_ptr = extras.alloc_const_string(name);
+        extras.alloc_node(xmlNode {
+            _private: ptr::null_mut(),
+            type_: xmlElementType::ElementNode,
+            name: name_ptr,
+            children: ptr::null_mut(),
+            last: ptr::null_mut(),
+            parent: ptr::null_mut(),
+            next: ptr::null_mut(),
+            prev: ptr::null_mut(),
+            doc: doc_ptr,
+            ns: ptr::null_mut(),
+            content: ptr::null_mut(),
+            properties: ptr::null_mut(),
+            nsDef: ptr::null_mut(),
+            psvi: ptr::null_mut(),
+            line: 0,
+            extra: 0,
+        })
+    }
+
+    pub fn alloc_text_node(&mut self, content: &[u8], node_type: xmlElementType) -> *mut xmlNode {
+        let doc_ptr = self.inner.as_ptr();
+        let extras = self.extras_mut();
+        let content_ptr = extras.alloc_string(content);
+        extras.alloc_node(xmlNode {
+            _private: ptr::null_mut(),
+            type_: node_type,
+            name: ptr::null(),
+            children: ptr::null_mut(),
+            last: ptr::null_mut(),
+            parent: ptr::null_mut(),
+            next: ptr::null_mut(),
+            prev: ptr::null_mut(),
+            doc: doc_ptr,
+            ns: ptr::null_mut(),
+            content: content_ptr,
+            properties: ptr::null_mut(),
+            nsDef: ptr::null_mut(),
+            psvi: ptr::null_mut(),
+            line: 0,
+            extra: 0,
+        })
+    }
+
+    pub fn alloc_attribute(&mut self, name: &[u8]) -> *mut xmlAttr {
+        let doc_ptr = self.inner.as_ptr();
+        let extras = self.extras_mut();
+        let name_ptr = extras.alloc_const_string(name);
+        extras.alloc_attr(xmlAttr {
+            _private: ptr::null_mut(),
+            type_: xmlElementType::AttributeNode,
+            name: name_ptr,
+            children: ptr::null_mut(),
+            last: ptr::null_mut(),
+            parent: ptr::null_mut(),
+            next: ptr::null_mut(),
+            prev: ptr::null_mut(),
+            doc: doc_ptr,
+            ns: ptr::null_mut(),
+            atype: xmlAttributeType::AttributeCdata,
+            psvi: ptr::null_mut(),
+        })
+    }
+
+    /// # Safety
+    /// `parent` and `child` must either be null or pointers produced by the
+    /// Rust allocation helpers in this module. The pointers must remain valid
+    /// for the duration of the call and are re-linked according to libxml2's
+    /// tree invariants.
+    pub unsafe fn attach_child(&mut self, parent: Option<*mut xmlNode>, child: *mut xmlNode) {
+        unsafe {
+            (*child).next = ptr::null_mut();
+            (*child).prev = ptr::null_mut();
+            (*child).parent = parent.unwrap_or(ptr::null_mut());
+
+            match parent {
+                Some(parent_ptr) => {
+                    if (*parent_ptr).children.is_null() {
+                        (*parent_ptr).children = child;
+                        (*parent_ptr).last = child;
+                    } else {
+                        let mut last = (*parent_ptr).last;
+                        if last.is_null() {
+                            last = (*parent_ptr).children;
+                            while !(*last).next.is_null() {
+                                last = (*last).next;
+                            }
+                        }
+                        (*child).prev = last;
+                        (*last).next = child;
+                        (*parent_ptr).last = child;
+                    }
+                }
+                None => {
+                    let doc_ptr = self.inner.as_ptr();
+                    if (*doc_ptr).children.is_null() {
+                        (*doc_ptr).children = child;
+                        (*doc_ptr).last = child;
+                    } else {
+                        let mut last = (*doc_ptr).last;
+                        if last.is_null() {
+                            last = (*doc_ptr).children;
+                            while !(*last).next.is_null() {
+                                last = (*last).next;
+                            }
+                        }
+                        (*child).prev = last;
+                        (*last).next = child;
+                        (*doc_ptr).last = child;
+                    }
+                }
+            }
+        }
+    }
+
+    /// # Safety
+    /// `element` and `attr` must originate from the Rust helpers in this
+    /// module. The attribute pointer is linked into the element's property
+    /// list without additional validation.
+    pub unsafe fn append_attribute(&mut self, element: *mut xmlNode, attr: *mut xmlAttr) {
+        unsafe {
+            (*attr).parent = element;
+            (*attr).next = ptr::null_mut();
+            (*attr).prev = ptr::null_mut();
+            if (*element).properties.is_null() {
+                (*element).properties = attr;
+            } else {
+                let mut current = (*element).properties;
+                while !(*current).next.is_null() {
+                    current = (*current).next;
+                }
+                (*current).next = attr;
+                (*attr).prev = current;
+            }
+        }
     }
 }
 
@@ -186,14 +403,19 @@ unsafe fn duplicate_null_terminated(ptr: *const u8) -> Option<Box<[u8]>> {
     }
 
     let mut len = 0usize;
-    unsafe {
-        while *ptr.add(len) != 0 {
-            len += 1;
-        }
-
-        let slice = std::slice::from_raw_parts(ptr, len + 1);
-        Some(slice.to_vec().into_boxed_slice())
+    while unsafe { *ptr.add(len) } != 0 {
+        len += 1;
     }
+
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len + 1) };
+    Some(slice.to_vec().into_boxed_slice())
+}
+
+fn to_c_string(data: &[u8]) -> Box<[u8]> {
+    let mut owned = Vec::with_capacity(data.len() + 1);
+    owned.extend_from_slice(data);
+    owned.push(0);
+    owned.into_boxed_slice()
 }
 
 /// Allocate a new document populated with the provided XML version.

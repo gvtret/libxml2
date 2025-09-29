@@ -1,7 +1,8 @@
 use crate::doc::{XmlDocument, xmlFreeDoc};
-use crate::tree::xmlDoc;
+use crate::tree::{xmlDoc, xmlElementType, xmlNode};
 use libc::{c_char, c_int, c_void};
 use once_cell::sync::Lazy;
+use std::char;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::fs;
@@ -9,6 +10,7 @@ use std::io::Read;
 use std::mem;
 use std::path::PathBuf;
 use std::ptr;
+use std::slice;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -56,12 +58,8 @@ struct PushParserState {
 static PUSH_PARSER_STATES: Lazy<Mutex<HashMap<usize, PushParserState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// A placeholder implementation of xmlReadMemory.
-///
-/// This function is one of the main entry points for parsing an XML document
-/// from a buffer in memory. The Rust port currently performs minimal
-/// validation, creating a document shell that records the caller supplied
-/// metadata.
+/// Parse an XML document stored entirely in memory and return a fully
+/// populated `xmlDoc` tree.
 ///
 /// # Safety
 /// The caller must supply valid pointers for the input buffer and optional
@@ -79,14 +77,21 @@ pub unsafe extern "C" fn xmlReadMemory(
         return ptr::null_mut();
     }
 
-    let ctxt = unsafe { xmlCreateMemoryParserCtxt(buffer, size) };
-    if ctxt.is_null() {
-        return ptr::null_mut();
-    }
+    let bytes: &[u8] = if size == 0 {
+        if buffer.is_null() {
+            &[]
+        } else {
+            let len = unsafe { libc::strlen(buffer) } as usize;
+            unsafe { slice::from_raw_parts(buffer as *const u8, len) }
+        }
+    } else {
+        unsafe { slice::from_raw_parts(buffer as *const u8, size as usize) }
+    };
 
-    let doc = unsafe { xmlCtxtReadMemory(ctxt, buffer, size, url, encoding, options) };
-    unsafe { xmlFreeParserCtxt(ctxt) };
-    doc
+    match parse_document_from_bytes(bytes, options, url, encoding) {
+        Ok(doc) => doc.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
 }
 
 /// Create a push-style parser context capable of consuming data incrementally.
@@ -785,27 +790,59 @@ pub unsafe extern "C" fn xmlCreateMemoryParserCtxt(
     Box::into_raw(Box::new(new_parser_context(buffer, size)))
 }
 
-/// Parse a document using the supplied parser context, synthesising a shell
-/// document for downstream consumers.
+#[unsafe(no_mangle)]
+/// Parse the buffer registered on the supplied context and produce a document
+/// tree when the input is well-formed.
 ///
 /// # Safety
-/// `ctxt` must be a valid pointer obtained from `xmlCreateMemoryParserCtxt`.
-#[unsafe(no_mangle)]
+/// `ctxt` must be a valid pointer obtained from the parser-context
+/// constructors. The context's `input` and `input_size` fields must describe a
+/// readable memory region that remains accessible for the duration of this
+/// call.
 pub unsafe extern "C" fn xmlParseDocument(ctxt: *mut xmlParserCtxt) -> c_int {
     if ctxt.is_null() {
         return -1;
     }
 
     let ctxt_ref = unsafe { &mut *ctxt };
-    if ctxt_ref.input_size > 0 && ctxt_ref.input.is_null() {
+    unsafe { reset_context_doc(ctxt_ref) };
+
+    if ctxt_ref.input_size < 0 {
         ctxt_ref.wellFormed = 0;
         return -1;
     }
 
-    let doc = unsafe { XmlDocument::new(ctxt_ref.options, ctxt_ref.base_url, ctxt_ref.encoding) };
-    ctxt_ref.doc = doc.into_raw();
-    ctxt_ref.wellFormed = 1;
-    0
+    let bytes: &[u8] = if ctxt_ref.input_size == 0 {
+        if ctxt_ref.input.is_null() {
+            &[]
+        } else {
+            let len = unsafe { libc::strlen(ctxt_ref.input) } as usize;
+            unsafe { slice::from_raw_parts(ctxt_ref.input as *const u8, len) }
+        }
+    } else {
+        if ctxt_ref.input.is_null() {
+            ctxt_ref.wellFormed = 0;
+            return -1;
+        }
+        unsafe { slice::from_raw_parts(ctxt_ref.input as *const u8, ctxt_ref.input_size as usize) }
+    };
+
+    match parse_document_from_bytes(
+        bytes,
+        ctxt_ref.options,
+        ctxt_ref.base_url,
+        ctxt_ref.encoding,
+    ) {
+        Ok(doc) => {
+            ctxt_ref.doc = doc.into_raw();
+            ctxt_ref.wellFormed = 1;
+            0
+        }
+        Err(_) => {
+            ctxt_ref.wellFormed = 0;
+            -1
+        }
+    }
 }
 
 /// Release the resources held by a parser context.
@@ -852,6 +889,432 @@ pub unsafe extern "C" fn xmlCreateDocParserCtxt(cur: *const u8) -> *mut xmlParse
     ctxt_ref.input_size = len as c_int;
 
     ctxt
+}
+
+fn parse_document_from_bytes(
+    bytes: &[u8],
+    options: c_int,
+    url: *const c_char,
+    encoding: *const c_char,
+) -> Result<XmlDocument, ()> {
+    let mut doc = unsafe { XmlDocument::new(options, url, encoding) };
+    SimpleParser::parse_into(&mut doc, bytes)?;
+    Ok(doc)
+}
+
+struct SimpleParser<'a> {
+    data: &'a [u8],
+    pos: usize,
+    doc: &'a mut XmlDocument,
+    stack: Vec<*mut xmlNode>,
+    root_count: usize,
+}
+
+type AttributeRecord = (Vec<u8>, Vec<u8>);
+
+impl<'a> SimpleParser<'a> {
+    fn parse_into(doc: &'a mut XmlDocument, bytes: &'a [u8]) -> Result<(), ()> {
+        let data = strip_utf8_bom(bytes);
+        let mut parser = SimpleParser {
+            data,
+            pos: 0,
+            doc,
+            stack: Vec::new(),
+            root_count: 0,
+        };
+
+        parser.doc.clear_tree();
+        parser.skip_whitespace();
+        parser.parse_xml_declaration()?;
+
+        while parser.pos < parser.data.len() {
+            parser.skip_whitespace();
+            if parser.pos >= parser.data.len() {
+                break;
+            }
+
+            if parser.starts_with(b"<!--") {
+                parser.parse_comment()?;
+            } else if parser.starts_with(b"<?") {
+                parser.parse_processing_instruction()?;
+            } else if parser.starts_with(b"</") {
+                parser.parse_end_element()?;
+            } else if parser.data[parser.pos] == b'<' {
+                parser.parse_start_element()?;
+            } else {
+                parser.parse_text_node()?;
+            }
+        }
+
+        if parser.root_count == 1 && parser.stack.is_empty() {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self.pos < self.data.len() && self.data[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+
+    fn starts_with(&self, pattern: &[u8]) -> bool {
+        self.data[self.pos..].starts_with(pattern)
+    }
+
+    fn parse_xml_declaration(&mut self) -> Result<(), ()> {
+        if !self.starts_with(b"<?xml") {
+            return Ok(());
+        }
+
+        self.pos += 5;
+        loop {
+            self.skip_whitespace();
+            if self.starts_with(b"?>") {
+                self.pos += 2;
+                break;
+            }
+
+            let name = self.parse_name()?;
+            self.skip_whitespace();
+            self.expect_char(b'=')?;
+            self.skip_whitespace();
+            let quote = self.next_byte()?;
+            if quote != b'"' && quote != b'\'' {
+                return Err(());
+            }
+            self.pos += 1;
+            let start = self.pos;
+            while self.pos < self.data.len() && self.data[self.pos] != quote {
+                self.pos += 1;
+            }
+            if self.pos >= self.data.len() {
+                return Err(());
+            }
+            let value = &self.data[start..self.pos];
+            self.pos += 1;
+
+            match name.as_slice() {
+                b"version" => self.doc.set_version_bytes(value),
+                b"encoding" => self.doc.set_encoding_bytes(value),
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_start_element(&mut self) -> Result<(), ()> {
+        self.expect_char(b'<')?;
+        let name = self.parse_name()?;
+        let attrs = self.parse_attributes()?;
+
+        let empty = if self.consume_char(b'/') {
+            self.expect_char(b'>')?;
+            true
+        } else {
+            self.expect_char(b'>')?;
+            false
+        };
+
+        let node = self.doc.alloc_element(&name);
+        self.attach_attributes(node, attrs)?;
+
+        let parent = self.stack.last().copied();
+        if parent.is_none() {
+            self.root_count += 1;
+            if self.root_count > 1 {
+                return Err(());
+            }
+        }
+        unsafe {
+            self.doc.attach_child(parent, node);
+        }
+
+        if !empty {
+            self.stack.push(node);
+        }
+
+        Ok(())
+    }
+
+    fn parse_end_element(&mut self) -> Result<(), ()> {
+        self.expect_sequence(b"</")?;
+        let name = self.parse_name()?;
+        self.skip_whitespace();
+        self.expect_char(b'>')?;
+
+        let node = self.stack.pop().ok_or(())?;
+        let node_name = node_name_bytes(node);
+        if node_name != name {
+            return Err(());
+        }
+
+        Ok(())
+    }
+
+    fn parse_text_node(&mut self) -> Result<(), ()> {
+        let start = self.pos;
+        while self.pos < self.data.len() && self.data[self.pos] != b'<' {
+            self.pos += 1;
+        }
+
+        let text = &self.data[start..self.pos];
+        if text.is_empty() {
+            return Ok(());
+        }
+
+        let decoded = decode_entities(text)?;
+        if decoded.is_empty() {
+            return Ok(());
+        }
+
+        let node = self.doc.alloc_text_node(&decoded, xmlElementType::TextNode);
+        unsafe {
+            self.doc.attach_child(self.stack.last().copied(), node);
+        }
+        Ok(())
+    }
+
+    fn parse_comment(&mut self) -> Result<(), ()> {
+        self.expect_sequence(b"<!--")?;
+        let start = self.pos;
+        while self.pos + 2 < self.data.len() && &self.data[self.pos..self.pos + 3] != b"-->" {
+            self.pos += 1;
+        }
+        if self.pos + 2 >= self.data.len() {
+            return Err(());
+        }
+        let comment = &self.data[start..self.pos];
+        self.pos += 3;
+
+        let node = self
+            .doc
+            .alloc_text_node(comment, xmlElementType::CommentNode);
+        unsafe {
+            self.doc.attach_child(self.stack.last().copied(), node);
+        }
+        Ok(())
+    }
+
+    fn parse_processing_instruction(&mut self) -> Result<(), ()> {
+        self.expect_sequence(b"<?")?;
+        while self.pos + 1 < self.data.len() && &self.data[self.pos..self.pos + 2] != b"?>" {
+            self.pos += 1;
+        }
+        if self.pos + 1 >= self.data.len() {
+            return Err(());
+        }
+        self.pos += 2;
+        Ok(())
+    }
+
+    fn parse_attributes(&mut self) -> Result<Vec<AttributeRecord>, ()> {
+        let mut attrs = Vec::new();
+
+        loop {
+            self.skip_whitespace();
+            if self.pos >= self.data.len() {
+                return Err(());
+            }
+
+            match self.data[self.pos] {
+                b'/' | b'>' => break,
+                _ => {
+                    let name = self.parse_name()?;
+                    self.skip_whitespace();
+                    self.expect_char(b'=')?;
+                    self.skip_whitespace();
+                    let quote = self.next_byte()?;
+                    if quote != b'"' && quote != b'\'' {
+                        return Err(());
+                    }
+                    self.pos += 1;
+                    let start = self.pos;
+                    while self.pos < self.data.len() && self.data[self.pos] != quote {
+                        self.pos += 1;
+                    }
+                    if self.pos >= self.data.len() {
+                        return Err(());
+                    }
+                    let value = &self.data[start..self.pos];
+                    self.pos += 1;
+                    let decoded = decode_entities(value)?;
+                    attrs.push((name, decoded));
+                }
+            }
+        }
+
+        Ok(attrs)
+    }
+
+    fn attach_attributes(
+        &mut self,
+        element: *mut xmlNode,
+        attrs: Vec<AttributeRecord>,
+    ) -> Result<(), ()> {
+        for (name, value) in attrs {
+            let attr = self.doc.alloc_attribute(&name);
+            if !value.is_empty() {
+                let child = self.doc.alloc_text_node(&value, xmlElementType::TextNode);
+                unsafe {
+                    (*child).parent = ptr::null_mut();
+                    (*child).next = ptr::null_mut();
+                    (*child).prev = ptr::null_mut();
+                    (*attr).children = child;
+                    (*attr).last = child;
+                }
+            }
+            unsafe {
+                self.doc.append_attribute(element, attr);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn parse_name(&mut self) -> Result<Vec<u8>, ()> {
+        if self.pos >= self.data.len() {
+            return Err(());
+        }
+
+        let start = self.pos;
+        if !is_name_start(self.data[self.pos]) {
+            return Err(());
+        }
+        self.pos += 1;
+        while self.pos < self.data.len() && is_name_char(self.data[self.pos]) {
+            self.pos += 1;
+        }
+
+        Ok(self.data[start..self.pos].to_vec())
+    }
+
+    fn expect_char(&mut self, expected: u8) -> Result<(), ()> {
+        if self.pos >= self.data.len() || self.data[self.pos] != expected {
+            return Err(());
+        }
+        self.pos += 1;
+        Ok(())
+    }
+
+    fn expect_sequence(&mut self, seq: &[u8]) -> Result<(), ()> {
+        if !self.data[self.pos..].starts_with(seq) {
+            return Err(());
+        }
+        self.pos += seq.len();
+        Ok(())
+    }
+
+    fn consume_char(&mut self, ch: u8) -> bool {
+        if self.pos < self.data.len() && self.data[self.pos] == ch {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn next_byte(&self) -> Result<u8, ()> {
+        self.data.get(self.pos).copied().ok_or(())
+    }
+}
+
+fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &bytes[3..]
+    } else {
+        bytes
+    }
+}
+
+fn decode_entities(data: &[u8]) -> Result<Vec<u8>, ()> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+
+    while i < data.len() {
+        if data[i] == b'&' {
+            let Some(end) = data[i + 1..].iter().position(|&b| b == b';') else {
+                return Err(());
+            };
+            let entity = &data[i + 1..i + 1 + end];
+            i += end + 2;
+
+            if entity.is_empty() {
+                return Err(());
+            }
+
+            if entity[0] == b'#' {
+                let codepoint = if entity.len() > 1 && (entity[1] == b'x' || entity[1] == b'X') {
+                    u32::from_str_radix(std::str::from_utf8(&entity[2..]).map_err(|_| ())?, 16)
+                        .map_err(|_| ())?
+                } else {
+                    (std::str::from_utf8(&entity[1..]).map_err(|_| ())?)
+                        .parse::<u32>()
+                        .map_err(|_| ())?
+                };
+                push_codepoint(&mut out, codepoint)?;
+            } else {
+                match entity {
+                    b"lt" => out.push(b'<'),
+                    b"gt" => out.push(b'>'),
+                    b"amp" => out.push(b'&'),
+                    b"apos" => out.push(b'\''),
+                    b"quot" => out.push(b'"'),
+                    _ => {
+                        out.push(b'&');
+                        out.extend_from_slice(entity);
+                        out.push(b';');
+                    }
+                }
+            }
+        } else {
+            out.push(data[i]);
+            i += 1;
+        }
+    }
+
+    Ok(out)
+}
+
+fn push_codepoint(out: &mut Vec<u8>, codepoint: u32) -> Result<(), ()> {
+    if let Some(ch) = char::from_u32(codepoint) {
+        let mut buf = [0u8; 4];
+        let encoded = ch.encode_utf8(&mut buf);
+        out.extend_from_slice(encoded.as_bytes());
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+fn is_name_start(byte: u8) -> bool {
+    matches!(byte,
+        b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'_'
+            | b':')
+}
+
+fn is_name_char(byte: u8) -> bool {
+    is_name_start(byte) || matches!(byte, b'0'..=b'9' | b'-' | b'.')
+}
+
+fn node_name_bytes(node: *mut xmlNode) -> Vec<u8> {
+    if node.is_null() {
+        return Vec::new();
+    }
+
+    unsafe {
+        if (*node).name.is_null() {
+            Vec::new()
+        } else {
+            CStr::from_ptr((*node).name as *const c_char)
+                .to_bytes()
+                .to_vec()
+        }
+    }
 }
 
 unsafe fn read_file_buffer(filename: *const c_char) -> Option<Vec<u8>> {
