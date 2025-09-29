@@ -309,6 +309,36 @@ impl XmlDocument {
         })
     }
 
+    pub fn alloc_processing_instruction(&mut self, target: &[u8], content: &[u8]) -> *mut xmlNode {
+        let doc_ptr = self.inner.as_ptr();
+        let extras = self.extras_mut();
+        let name_ptr = extras.alloc_const_string(target);
+        let content_ptr = if content.is_empty() {
+            ptr::null_mut()
+        } else {
+            extras.alloc_string(content)
+        };
+
+        extras.alloc_node(xmlNode {
+            _private: ptr::null_mut(),
+            type_: xmlElementType::PiNode,
+            name: name_ptr,
+            children: ptr::null_mut(),
+            last: ptr::null_mut(),
+            parent: ptr::null_mut(),
+            next: ptr::null_mut(),
+            prev: ptr::null_mut(),
+            doc: doc_ptr,
+            ns: ptr::null_mut(),
+            content: content_ptr,
+            properties: ptr::null_mut(),
+            nsDef: ptr::null_mut(),
+            psvi: ptr::null_mut(),
+            line: 0,
+            extra: 0,
+        })
+    }
+
     pub fn alloc_attribute(&mut self, name: &[u8]) -> *mut xmlAttr {
         let doc_ptr = self.inner.as_ptr();
         let extras = self.extras_mut();

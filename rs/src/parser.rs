@@ -1258,13 +1258,25 @@ impl<'a> SimpleParser<'a> {
 
     fn parse_processing_instruction(&mut self) -> Result<(), ()> {
         self.expect_sequence(b"<?")?;
+        let target = self.parse_name()?;
+        self.skip_whitespace();
+        let start = self.pos;
         while self.pos + 1 < self.data.len() && &self.data[self.pos..self.pos + 2] != b"?>" {
             self.pos += 1;
         }
         if self.pos + 1 >= self.data.len() {
             return Err(());
         }
+        let content = &self.data[start..self.pos];
         self.pos += 2;
+
+        let node = self
+            .doc
+            .alloc_processing_instruction(target.as_slice(), content);
+        unsafe {
+            self.doc.attach_child(self.current_parent(), node);
+        }
+
         Ok(())
     }
 
@@ -1791,6 +1803,42 @@ mod tests {
             assert!(!child.is_null());
             assert_eq!((*child).type_, xmlElementType::CdataSectionNode);
             assert_eq!(node_text(child), "Hello <world>");
+        }
+    }
+
+    #[test]
+    fn builds_processing_instruction_nodes() {
+        let xml = br#"<?xml version="1.0"?><?process data?><root><?inner more ?><child/><?empty?></root>"#;
+        let mut doc = unsafe { XmlDocument::new(0, ptr::null(), ptr::null()) };
+        SimpleParser::parse_into(&mut doc, xml).expect("parse document");
+
+        unsafe {
+            let doc_ptr = doc.as_ptr();
+            let first = (*doc_ptr).children;
+            assert!(!first.is_null());
+            assert_eq!((*first).type_, xmlElementType::PiNode);
+            assert_eq!(node_name(first), "process");
+            assert_eq!(node_text(first), "data");
+
+            let root = (*first).next;
+            assert!(!root.is_null());
+            assert_eq!(node_name(root), "root");
+
+            let inner = (*root).children;
+            assert!(!inner.is_null());
+            assert_eq!((*inner).type_, xmlElementType::PiNode);
+            assert_eq!(node_name(inner), "inner");
+            assert_eq!(node_text(inner), "more ");
+
+            let child = (*inner).next;
+            assert!(!child.is_null());
+            assert_eq!(node_name(child), "child");
+
+            let trailing = (*child).next;
+            assert!(!trailing.is_null());
+            assert_eq!((*trailing).type_, xmlElementType::PiNode);
+            assert_eq!(node_name(trailing), "empty");
+            assert_eq!(node_text(trailing), "");
         }
     }
 
