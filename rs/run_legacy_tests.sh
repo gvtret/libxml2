@@ -7,7 +7,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/build-rs-legacy"
 
-PRELOAD_MODE="${LIBXML2_PRELOAD:-0}"
+if [[ -n "${LIBXML2_RS_PRELOAD:-}" ]]; then
+  PRELOAD_MODE="${LIBXML2_RS_PRELOAD}"
+elif [[ -n "${LIBXML2_PRELOAD:-}" ]]; then
+  PRELOAD_MODE="${LIBXML2_PRELOAD}"
+else
+  PRELOAD_MODE=0
+fi
+
+CTEST_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --preload)
@@ -17,6 +25,11 @@ while [[ $# -gt 0 ]]; do
     --no-preload)
       PRELOAD_MODE=0
       shift
+      ;;
+    --)
+      shift
+      CTEST_ARGS=("$@")
+      break
       ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -45,4 +58,4 @@ else
   echo "Running legacy suite against the in-tree C library"
 fi
 
-ctest --test-dir "${BUILD_DIR}" --output-on-failure
+ctest --test-dir "${BUILD_DIR}" --output-on-failure "${CTEST_ARGS[@]}"

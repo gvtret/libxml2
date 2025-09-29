@@ -60,6 +60,7 @@ progress through Phase 1 of the porting plan.
   - `runtest` produces thousands of mismatched output files because the placeholder parser returns empty documents, culminating in a segmentation fault once the harness inspects the bogus results.
   - `runsuite`, `testchar`, `testparser`, and `testrecurse` all crash immediately because they expect fully-populated DOM trees, SAX callbacks, and recursion detection that the stubs do not yet provide.
   - Only `testapi` and `testdict` complete without crashing; the remaining binaries abort as soon as they hit unimplemented functionality.
+- :bulb: Use `./rs/run_legacy_tests.sh [--preload|--no-preload] -- <ctest-args>` to focus on a subset of the regression suite (for example, `-R testapi`) while iterating on the Rust shims.
 
 ## Next steps
 - Introduce a thin abstraction layer that allows C entry points to toggle between Rust and legacy implementations.
